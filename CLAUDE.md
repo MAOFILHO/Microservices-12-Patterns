@@ -97,3 +97,14 @@ make run       # every service + gateway + frontend, health-gated
 make test      # unit tests, each suite in its own venv
 make smoke     # phased smoke tests, skip gracefully when not applicable
 ```
+
+## Agent skills
+
+### Issue tracker
+GitHub Issues on MAOFILHO/Microservices-12-Patterns, via the `gh` CLI. See `docs/agents/issue-tracker.md`.
+
+### Triage labels
+The 5 default labels: needs-triage, needs-info, ready-for-agent, ready-for-human, wontfix. See `docs/agents/triage-labels.md`.
+
+### Domain docs
+Single-context: one `CONTEXT.md` and `docs/adr/` at the repo root, created when first needed. See `docs/agents/domain.md`.
