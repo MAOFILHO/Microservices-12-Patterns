@@ -25,12 +25,10 @@ REPO_ROOT = Path(__file__).resolve().parents[1]
 # belonging to this project (kept as a secondary signal alongside cwd).
 OWN_PROJECT_MARKERS = [
     str(REPO_ROOT),
-    "monolith/run.py",
-    "user-service/run.py",
-    "product-service/run.py",
-    "order-service/run.py",
-    "bff/app/main.py",
-    "uvicorn app.main:app",
+    "services/user/run.py",
+    "services/catalog/run.py",
+    "services/order/run.py",
+    "gateway/app/main.py",
 ]
 
 

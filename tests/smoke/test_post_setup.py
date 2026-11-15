@@ -8,25 +8,23 @@ import subprocess
 
 import pytest
 
-SERVICES = ["bff"]
-MICROSERVICES = ["user-service", "product-service", "order-service"]
+from service_table import FLASK_SERVICES, GATEWAY
 
 
-@pytest.mark.parametrize("service", SERVICES)
-def test_service_venv_has_dependencies(repo_root, service):
-    venv_python = repo_root / service / ".venv" / "bin" / "python"
+@pytest.mark.parametrize("svc", [GATEWAY], ids=lambda s: s.name)
+def test_gateway_venv_has_dependencies(svc):
+    venv_python = svc.path / ".venv" / "bin" / "python"
     if not venv_python.exists():
-        pytest.skip(f"{service}/.venv not created yet — run `make setup` first")
-    result = subprocess.run([str(venv_python), "-c", "import flask" if service == "monolith" else "import fastapi"],
-                             capture_output=True, text=True)
+        pytest.skip(f"{svc.path.name}/.venv not created yet — run `make setup` first")
+    result = subprocess.run([str(venv_python), "-c", "import fastapi, httpx"], capture_output=True, text=True)
     assert result.returncode == 0, result.stderr
 
 
-@pytest.mark.parametrize("service", MICROSERVICES)
-def test_microservice_venv_has_dependencies(repo_root, service):
-    venv_python = repo_root / "microservices" / service / ".venv" / "bin" / "python"
+@pytest.mark.parametrize("svc", FLASK_SERVICES, ids=lambda s: s.name)
+def test_service_venv_has_dependencies(svc):
+    venv_python = svc.path / ".venv" / "bin" / "python"
     if not venv_python.exists():
-        pytest.skip(f"microservices/{service}/.venv not created yet — run `make setup` first")
+        pytest.skip(f"services/{svc.name}/.venv not created yet — run `make setup` first")
     result = subprocess.run([str(venv_python), "-c", "import flask, pydantic"], capture_output=True, text=True)
     assert result.returncode == 0, result.stderr
 

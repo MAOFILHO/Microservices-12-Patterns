@@ -1,4 +1,4 @@
-@description('One reusable Container App module — instantiated 5 times from main.bicep (monolith, user-service, product-service, order-service, bff). Explicit cheap defaults: Consumption plan, minReplicas 0 (scale-to-zero), 0.25 vCPU / 0.5Gi.')
+@description('One reusable Container App module — instantiated once per service from main.bicep (user, catalog, order, gateway). Explicit cheap defaults: Consumption plan, minReplicas 0 (scale-to-zero), 0.25 vCPU / 0.5Gi.')
 param location string
 param name string
 param environmentId string
@@ -19,7 +19,7 @@ param external bool = true
 @description('Secret value for the AZURE_MYSQL_ADMIN_PASSWORD env var, referenced via secretRef so it never appears in plain env vars or deployment output.')
 @secure()
 param mysqlAdminPassword string
-@description('Set true only for the bff app — grants it a system-assigned managed identity so it can create the microservices Container Apps on demand during a live migration (see infra/provision.py, which assigns Contributor scoped to this resource group after this deploys).')
+@description('Grants a system-assigned managed identity. Off for every app today; kept for later milestones.')
 param enableSystemIdentity bool = false
 
 resource containerApp 'Microsoft.App/containerApps@2024-03-01' = {

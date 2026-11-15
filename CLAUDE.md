@@ -27,25 +27,34 @@ history, monolith dropped). The full agreed plan is in [`docs/PLAN.md`](docs/PLA
 - Name prefix: `ms12p` (parent uses `flaskms`). Teardown deletes the whole resource group, so a
   shared name would delete the other project.
 
-## Current state (M0)
-The code is still the parent project's microservices + BFF + frontend, with the monolith
-removed from setup, tests and CI only. Remaining monolith references in `bff/`, `frontend/`,
-`scripts/run_local.py`, `scripts/benchmark.py` and `infra/` are replaced in M1, when `bff/`
-becomes `gateway/`, services move to `services/<name>/`, and ports move to the new range
-(gateway 8100, registry 8500, services 5101-5105, frontend 5273).
+## Current state (M1a, layout)
+- Folders: `services/{user,catalog,order}/` (Flask, one DB each), `gateway/` (FastAPI),
+  `frontend/`, `infra/`, `scripts/`, `tests/`. The monolith and the old migration engine are gone.
+- **One service table**: `scripts/service_table.py` lists every local process, folder and port.
+  `setup.py`, `run_local.py`, `provision.py` and the smoke tests all read it. Add a service there.
+- Ports: user 5101, catalog 5102, order 5103, gateway 8100, frontend 5273 (registry 8500 and
+  payment/inventory 5104-5105 arrive in later milestones).
+- Gateway routes `/api/shop/<path>` to `/api/<path>` on the owning service by first path segment
+  (`gateway/app/config.py` `ROUTE_OWNERS`). No auth or aggregation yet (M1).
+- The catalog service keeps the `product` resource name in its API (`/api/product(s)`) and its
+  `product_api` package. Only the service, its env vars (`CATALOG_*`) and its DB (`catalog_db`) are
+  named catalog.
+- Azure: one Container App per service plus the gateway, all external ingress, images built with
+  `az acr build --platform linux/amd64`.
 
 ## Stack
 Python 3.12 (Flask 3.1 services, FastAPI gateway), Node 18+ (React 18, TypeScript 5, Vite 5),
 SQLite locally, Azure MySQL Flexible Server (one server, one DB per service) in Azure.
 
 ## Collision note (inherited)
-Every Flask service has a top-level `config.py`/`application` package and the BFF has `app`.
-Each runs in its own venv. `tests/conftest.py` adds only `infra/`, `scripts/`, `bff/` to
+Every Flask service has a top-level `config.py`/`application` package and the gateway has `app`.
+Each runs in its own venv. `tests/conftest.py` adds only `infra/`, `scripts/`, `gateway/` to
 `sys.path`. M1 fixes this with a shared `shop_common` package.
 
 ## How to run
 ```bash
 make setup     # venvs per service + frontend npm deps, no Docker
+make run       # every service + gateway + frontend, health-gated
 make test      # unit tests, each suite in its own venv
 make smoke     # phased smoke tests, skip gracefully when not applicable
 ```

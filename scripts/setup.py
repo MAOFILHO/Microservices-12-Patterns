@@ -2,7 +2,7 @@
 """make setup — installs all dependencies and runs pre-smoke-tests.
 
 No Docker Desktop is used anywhere: this creates one Python 3.12 venv per
-Flask service + the FastAPI BFF, and installs frontend npm dependencies.
+Flask service + the FastAPI gateway, and installs frontend npm dependencies.
 Containers only exist on Azure (built later via `az acr build`).
 """
 import shutil
@@ -14,14 +14,7 @@ REPO_ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 from _procutil import ensure_port_free  # noqa: E402
 
-PYTHON_SERVICES = [
-    ("user-service", REPO_ROOT / "microservices" / "user-service", 5001),
-    ("product-service", REPO_ROOT / "microservices" / "product-service", 5002),
-    ("order-service", REPO_ROOT / "microservices" / "order-service", 5003),
-    ("bff", REPO_ROOT / "bff", 8000),
-]
-FRONTEND_DIR = REPO_ROOT / "frontend"
-FRONTEND_PORT = 5173
+from service_table import FRONTEND_DIR, FRONTEND_PORT, PYTHON_SERVICES  # noqa: E402
 
 MIN_PYTHON = (3, 12)
 
@@ -62,7 +55,7 @@ def check_python_version(python_bin: str | None) -> bool:
 
 def check_ports_free() -> bool:
     all_ok = True
-    for name, _dir, port in PYTHON_SERVICES + [("frontend", FRONTEND_DIR, FRONTEND_PORT)]:
+    for name, port in [(s.name, s.local_port) for s in PYTHON_SERVICES] + [("frontend", FRONTEND_PORT)]:
         try:
             ensure_port_free(port, name)
             print(f"[pre-smoke] Port {port} ({name}) ... OK")
@@ -113,7 +106,8 @@ def main() -> int:
 
     print("\n=== Installing dependencies (no Docker involved) ===")
     create_venv_and_install(python312_bin, "repo-root (dev/test tooling)", REPO_ROOT, REPO_ROOT / "requirements-dev.txt")
-    for name, service_dir, _port in PYTHON_SERVICES:
+    for svc in PYTHON_SERVICES:
+        name, service_dir = svc.name, svc.path
         create_venv_and_install(python312_bin, name, service_dir, service_dir / "requirements.txt")
         # pytest is needed to run each service's own tests/ folder (see Makefile's `test` target).
         # Invoke it as `python -m pip`, not the `bin/pip` script directly — that script was just

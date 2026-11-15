@@ -59,26 +59,13 @@ def main() -> int:
 
     container_apps = state.get("container_apps", {})
     for app_name in container_apps.values():
-        if app_name == "bff":
-            # bff holds the live migration's state in an in-process
-            # singleton (see migration_engine.py) — pinned to exactly one
-            # replica always. Caught for real: letting it scale out let two
-            # replicas each run their own independent copy of the migration,
-            # producing an impossible-looking mixed step state as traffic
-            # load-balanced between them.
-            print("=== Restoring Container App 'bff' scale range (min=1, max=1 — pinned, see migration_engine.py) ===")
-            subprocess.run(
-                ["az", "containerapp", "update", "--name", app_name, "--resource-group", resource_group,
-                 "--min-replicas", "1", "--max-replicas", "1", "--output", "json"],
-            )
-            continue
         print(f"=== Restoring Container App '{app_name}' scale range (min=0, max={MAX_REPLICAS_DEFAULT}) ===")
         subprocess.run(
             ["az", "containerapp", "update", "--name", app_name, "--resource-group", resource_group,
              "--min-replicas", "0", "--max-replicas", MAX_REPLICAS_DEFAULT, "--output", "json"],
         )
 
-    print("\nResumed. Give the monolith/bff a few seconds to cold-start on first request.")
+    print("\nResumed. Give the services a few seconds to cold-start on first request.")
     return 0
 
 

@@ -1,20 +1,9 @@
 @description('''
-Deploys the Azure FOUNDATION plus the monolith ("before") stack only:
-ACR (Basic), Container Apps Environment (Consumption), MySQL Flexible Server
-(Burstable B1ms, 4 logical DBs pre-created), a Static Web App (Free) for the
-React frontend, and 2 Container Apps — monolith and bff. The three
-microservices' Container Apps (user-, product-, order-service) are
-deliberately NOT deployed here: they don't exist until the live migration
-creates them on demand via the Azure SDK (see bff/app/azure_traffic.py),
-which is the whole point of the demo — watching real Azure resources spin
-up as the migration runs, not a pre-provisioned stack where "migration"
-just flips a switch. The bff Container App gets a system-assigned managed
-identity with Contributor scoped to this resource group so it can create
-those Container Apps itself at runtime (see infra/provision.py). Every SKU
-below is the cheapest tier that satisfies the requirement, chosen explicitly
-in Phase 2 and never left to a CLI default. Names are resolved by
-infra/provision.py BEFORE this deployment runs, after checking for
-collisions with existing or soft-deleted resources.
+Deploys the whole stack: ACR (Basic), Container Apps Environment (Consumption), MySQL Flexible
+Server (Burstable B1ms, one logical DB per service), a Static Web App (Free) for the React
+frontend, and one Container App per service (user, catalog, order) plus the API gateway.
+Every SKU is the cheapest tier that meets the need. Names are resolved by infra/provision.py
+BEFORE this deployment runs, after checking for collisions.
 ''')
 param location string = resourceGroup().location
 
@@ -91,59 +80,85 @@ var commonEnv = [
   { name: 'AZURE_MYSQL_ADMIN_PASSWORD', secretRef: 'mysql-password' }
 ]
 
-module monolith 'modules/container-app.bicep' = {
-  name: 'monolith'
+var acrPassword = listCredentials(resourceId('Microsoft.ContainerRegistry/registries', acrName), '2023-11-01-preview').passwords[0].value
+
+module user 'modules/container-app.bicep' = {
+  name: 'user'
   params: {
     location: location
-    name: 'monolith'
+    name: 'user'
     environmentId: containerAppsEnv.outputs.environmentId
     acrLoginServer: acr.outputs.loginServer
     acrUsername: acr.outputs.registryName
-    acrPassword: listCredentials(resourceId('Microsoft.ContainerRegistry/registries', acrName), '2023-11-01-preview').passwords[0].value
+    acrPassword: acrPassword
     mysqlAdminPassword: mysqlAdminPassword
-    imageName: 'monolith'
+    imageName: 'user'
     imageTag: imageTag
-    targetPort: 6000
+    targetPort: 5101
     minReplicas: minReplicas
     envVars: commonEnv
   }
 }
 
-module bff 'modules/container-app.bicep' = {
-  name: 'bff'
+module catalog 'modules/container-app.bicep' = {
+  name: 'catalog'
   params: {
     location: location
-    name: 'bff'
+    name: 'catalog'
     environmentId: containerAppsEnv.outputs.environmentId
     acrLoginServer: acr.outputs.loginServer
     acrUsername: acr.outputs.registryName
-    acrPassword: listCredentials(resourceId('Microsoft.ContainerRegistry/registries', acrName), '2023-11-01-preview').passwords[0].value
+    acrPassword: acrPassword
     mysqlAdminPassword: mysqlAdminPassword
-    imageName: 'bff'
+    imageName: 'catalog'
     imageTag: imageTag
-    targetPort: 8000
-    // Pinned to exactly 1 replica (not the shared minReplicas/maxReplicas=3
-    // default every other Container App gets) — the live migration's state
-    // lives in an in-process singleton (see migration_engine.py), so two
-    // replicas would each run their own independent copy of it. Caught for
-    // real: letting bff scale out produced a migration status with an
-    // impossible mix of "done" and "pending" steps as traffic
-    // load-balanced between two replicas with different in-memory state.
-    minReplicas: 1
-    maxReplicas: 1
-    enableSystemIdentity: true
+    targetPort: 5102
+    minReplicas: minReplicas
+    envVars: commonEnv
+  }
+}
+
+module order 'modules/container-app.bicep' = {
+  name: 'order'
+  params: {
+    location: location
+    name: 'order'
+    environmentId: containerAppsEnv.outputs.environmentId
+    acrLoginServer: acr.outputs.loginServer
+    acrUsername: acr.outputs.registryName
+    acrPassword: acrPassword
+    mysqlAdminPassword: mysqlAdminPassword
+    imageName: 'order'
+    imageTag: imageTag
+    targetPort: 5103
+    minReplicas: minReplicas
     envVars: concat(commonEnv, [
-      { name: 'MONOLITH_BASE_URL', value: 'https://${monolith.outputs.fqdn}' }
-      { name: 'FRONTEND_ORIGIN', value: 'https://${staticWebApp.outputs.defaultHostname}' }
-      { name: 'AZURE_RESOURCE_GROUP', value: resourceGroup().name }
-      { name: 'AZURE_SUBSCRIPTION_ID', value: subscription().subscriptionId }
-      { name: 'AZURE_LOCATION', value: location }
-      { name: 'AZURE_CONTAINER_APPS_ENV_ID', value: containerAppsEnv.outputs.environmentId }
-      { name: 'AZURE_CONTAINER_APPS_DEFAULT_DOMAIN', value: containerAppsEnv.outputs.defaultDomain }
-      { name: 'AZURE_ACR_LOGIN_SERVER', value: acr.outputs.loginServer }
-      { name: 'AZURE_ACR_NAME', value: acr.outputs.registryName }
-      { name: 'AZURE_ACR_PASSWORD', secretRef: 'acr-password' }
+      { name: 'USER_SERVICE_BASE_URL', value: 'https://${user.outputs.fqdn}' }
     ])
+  }
+}
+
+module gateway 'modules/container-app.bicep' = {
+  name: 'gateway'
+  params: {
+    location: location
+    name: 'gateway'
+    environmentId: containerAppsEnv.outputs.environmentId
+    acrLoginServer: acr.outputs.loginServer
+    acrUsername: acr.outputs.registryName
+    acrPassword: acrPassword
+    mysqlAdminPassword: mysqlAdminPassword
+    imageName: 'gateway'
+    imageTag: imageTag
+    targetPort: 8100
+    minReplicas: minReplicas
+    envVars: [
+      { name: 'RUN_MODE', value: 'azure' }
+      { name: 'USER_SERVICE_BASE_URL', value: 'https://${user.outputs.fqdn}' }
+      { name: 'CATALOG_SERVICE_BASE_URL', value: 'https://${catalog.outputs.fqdn}' }
+      { name: 'ORDER_SERVICE_BASE_URL', value: 'https://${order.outputs.fqdn}' }
+      { name: 'FRONTEND_ORIGIN', value: 'https://${staticWebApp.outputs.defaultHostname}' }
+    ]
   }
 }
 
@@ -153,6 +168,4 @@ output mysqlFqdn string = mysql.outputs.fqdn
 output containerAppsEnvId string = containerAppsEnv.outputs.environmentId
 output containerAppsDefaultDomain string = containerAppsEnv.outputs.defaultDomain
 output staticWebAppHostname string = staticWebApp.outputs.defaultHostname
-output monolithFqdn string = monolith.outputs.fqdn
-output bffFqdn string = bff.outputs.fqdn
-output bffPrincipalId string = bff.outputs.principalId
+output gatewayFqdn string = gateway.outputs.fqdn

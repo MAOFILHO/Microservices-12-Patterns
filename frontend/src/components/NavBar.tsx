@@ -3,9 +3,7 @@ import { NavLink } from "react-router-dom";
 const links = [
   { to: "/", label: "Home", end: true },
   { to: "/shop", label: "Shop" },
-  { to: "/migrate", label: "Migrate" },
-  { to: "/learn", label: "Learn" },
-  { to: "/metrics", label: "Metrics" },
+  { to: "/patterns", label: "Patterns" },
 ];
 
 export default function NavBar() {
@@ -13,7 +11,7 @@ export default function NavBar() {
     <header className="top-nav">
       <div className="brand">
         <span className="brand-badge">C</span>
-        Contoso Migrate
+        Contoso · 12 Patterns
       </div>
       <nav>
         {links.map((link) => (

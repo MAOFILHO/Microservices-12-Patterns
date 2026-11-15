@@ -1,19 +1,15 @@
-"""Post-run smoke tests: run AFTER `make run` (and, for the microservices
-half, after triggering a migration from the Migrate page or running
-`python scripts/run_local.py --all`). Exercises the real register -> login ->
-create product -> add to cart -> checkout flow against whichever backends
-are currently reachable — skips (rather than fails) a backend that isn't up,
-since the microservices are expected to be down until migration runs."""
+"""Post-run smoke tests: run AFTER `make run`. Exercises the real register -> login ->
+create product -> add to cart -> checkout flow, first against the services directly and then
+through the gateway. Skips (rather than fails) when the stack is not up."""
 import uuid
 
 import httpx
 import pytest
 
-MONOLITH_URL = "http://127.0.0.1:6000"
-USER_SERVICE_URL = "http://127.0.0.1:5001"
-PRODUCT_SERVICE_URL = "http://127.0.0.1:5002"
-ORDER_SERVICE_URL = "http://127.0.0.1:5003"
-BFF_URL = "http://127.0.0.1:8000"
+from service_table import FLASK_SERVICES, GATEWAY
+
+URLS = {s.name: s.local_url for s in FLASK_SERVICES}
+GATEWAY_URL = GATEWAY.local_url
 
 
 def _is_up(url: str) -> bool:
@@ -23,67 +19,42 @@ def _is_up(url: str) -> bool:
         return False
 
 
-def test_monolith_full_flow():
-    if not _is_up(MONOLITH_URL):
-        pytest.skip("monolith not running — start it with `make run` first")
-
+def _checkout_flow(user_url: str, catalog_url: str, order_url: str) -> None:
     token = uuid.uuid4().hex[:8]
     username, email, password = f"user{token}", f"{token}@example.com", "secret123"
 
-    r = httpx.post(f"{MONOLITH_URL}/api/user/create", data={"username": username, "email": email, "password": password})
+    r = httpx.post(f"{user_url}/user/create", data={"username": username, "email": email, "password": password})
     assert r.status_code == 200, r.text
 
-    r = httpx.post(f"{MONOLITH_URL}/api/user/login", data={"username": username, "password": password})
+    r = httpx.post(f"{user_url}/user/login", data={"username": username, "password": password})
     assert r.status_code == 200, r.text
     api_key = r.json()["api_key"]
 
-    r = httpx.post(f"{MONOLITH_URL}/api/product/create", data={"name": f"P{token}", "slug": f"p{token}", "price": "1500"})
+    r = httpx.post(f"{catalog_url}/product/create", data={"name": f"P{token}", "slug": f"p{token}", "price": "1500"})
     assert r.status_code == 200, r.text
     product_id = r.json()["product"]["id"]
 
     headers = {"Authorization": f"Basic {api_key}"}
-    r = httpx.post(f"{MONOLITH_URL}/api/order/add-item", data={"product_id": product_id, "qty": 2}, headers=headers)
-    assert r.status_code == 200, r.text
+    r = httpx.post(f"{order_url}/order/add-item", data={"product_id": product_id, "qty": 2}, headers=headers)
+    assert r.status_code == 200, r.text  # order calls user internally to validate the api_key
 
-    r = httpx.post(f"{MONOLITH_URL}/api/order/checkout", headers=headers)
-    assert r.status_code == 200, r.text
-    assert r.json()["result"]["is_open"] is False
-
-
-def test_microservices_full_flow():
-    services_up = all(_is_up(u) for u in (USER_SERVICE_URL, PRODUCT_SERVICE_URL, ORDER_SERVICE_URL))
-    if not services_up:
-        pytest.skip("microservices not all running — start them from the Migrate page (local mode) first")
-
-    token = uuid.uuid4().hex[:8]
-    username, email, password = f"user{token}", f"{token}@example.com", "secret123"
-
-    r = httpx.post(f"{USER_SERVICE_URL}/api/user/create", data={"username": username, "email": email, "password": password})
-    assert r.status_code == 200, r.text
-
-    r = httpx.post(f"{USER_SERVICE_URL}/api/user/login", data={"username": username, "password": password})
-    assert r.status_code == 200, r.text
-    api_key = r.json()["api_key"]
-
-    r = httpx.post(f"{PRODUCT_SERVICE_URL}/api/product/create", data={"name": f"P{token}", "slug": f"p{token}", "price": "1500"})
-    assert r.status_code == 200, r.text
-    product_id = r.json()["product"]["id"]
-
-    headers = {"Authorization": f"Basic {api_key}"}
-    r = httpx.post(f"{ORDER_SERVICE_URL}/api/order/add-item", data={"product_id": product_id, "qty": 2}, headers=headers)
-    assert r.status_code == 200, r.text  # order-service calls user-service internally (ACL) to validate api_key
-
-    r = httpx.post(f"{ORDER_SERVICE_URL}/api/order/checkout", headers=headers)
+    r = httpx.post(f"{order_url}/order/checkout", headers=headers)
     assert r.status_code == 200, r.text
     assert r.json()["result"]["is_open"] is False
 
 
-def test_bff_reachable_and_proxies_correctly():
-    if not _is_up(BFF_URL):
-        pytest.skip("bff not running — start it with `make run` first")
-    if not _is_up(MONOLITH_URL):
-        pytest.skip("monolith not running")
+def test_services_full_flow_direct():
+    if not all(_is_up(u) for u in URLS.values()):
+        pytest.skip("services not all running — start them with `make run` first")
+    _checkout_flow(*(f"{URLS[n]}/api" for n in ("user", "catalog", "order")))
 
-    r = httpx.get(f"{BFF_URL}/api/shop/monolith/products")
+
+def test_full_flow_through_gateway():
+    if not _is_up(GATEWAY_URL) or not all(_is_up(u) for u in URLS.values()):
+        pytest.skip("gateway or services not running — start them with `make run` first")
+    shop = f"{GATEWAY_URL}/api/shop"
+    # The gateway forwards /api/shop/<path> to /api/<path> on the owning service.
+    _checkout_flow(shop, shop, shop)
+    r = httpx.get(f"{shop}/products")
     assert r.status_code == 200
     assert "results" in r.json()

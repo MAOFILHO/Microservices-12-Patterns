@@ -1,28 +1,29 @@
 import { FormEvent, useEffect, useState } from "react";
-import { Backend, MigrationSnapshot, Order, Product, migrationApi, shopApi } from "../api/bffClient";
+import { Order, Product, shopApi } from "../api/gatewayClient";
 
 interface Auth {
   username: string;
   apiKey: string;
 }
 
-function loadAuth(backend: Backend): Auth | null {
-  const raw = localStorage.getItem(`shop_auth_${backend}`);
+const AUTH_KEY = "shop_auth";
+
+function loadAuth(): Auth | null {
+  const raw = localStorage.getItem(AUTH_KEY);
   return raw ? (JSON.parse(raw) as Auth) : null;
 }
 
-function saveAuth(backend: Backend, auth: Auth | null) {
-  if (auth) localStorage.setItem(`shop_auth_${backend}`, JSON.stringify(auth));
-  else localStorage.removeItem(`shop_auth_${backend}`);
+function saveAuth(auth: Auth | null) {
+  if (auth) localStorage.setItem(AUTH_KEY, JSON.stringify(auth));
+  else localStorage.removeItem(AUTH_KEY);
 }
 
 export default function Shop() {
-  const [backend, setBackend] = useState<Backend>("monolith");
   const [products, setProducts] = useState<Product[]>([]);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
-  const [auth, setAuth] = useState<Auth | null>(() => loadAuth("monolith"));
+  const [auth, setAuth] = useState<Auth | null>(() => loadAuth());
   const [authMode, setAuthMode] = useState<"login" | "register">("register");
   const [authError, setAuthError] = useState<string | null>(null);
   const [authBusy, setAuthBusy] = useState(false);
@@ -33,112 +34,43 @@ export default function Shop() {
 
   const [seedStatus, setSeedStatus] = useState<string | null>(null);
 
-  const [migration, setMigration] = useState<MigrationSnapshot | null>(null);
-  const [migrationLoaded, setMigrationLoaded] = useState(false);
-  const [restartBusy, setRestartBusy] = useState(false);
-  const monolithDecommissioned =
-    migration?.steps.find((s) => s.id === "decommission")?.status === "done";
-  const isCloud = migration?.mode === "azure";
-
-  useEffect(() => {
-    let cancelled = false;
-    function poll() {
-      migrationApi
-        .status()
-        .then((data) => {
-          if (cancelled) return;
-          setMigration(data);
-          setMigrationLoaded(true);
-        })
-        .catch(() => !cancelled && setMigrationLoaded(true));
-    }
-    poll();
-    const interval = setInterval(poll, 3000);
-    return () => {
-      cancelled = true;
-      clearInterval(interval);
-    };
-  }, []);
-
-  // In the cloud deployment there is only ever one live backend at a time —
-  // no side-by-side toggle like local mode's "run-all" convenience — so Shop
-  // just follows whatever the migration says is currently active.
-  useEffect(() => {
-    if (isCloud && migration && migration.active_backend !== backend) {
-      setBackend(migration.active_backend);
-    }
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [isCloud, migration?.active_backend]);
-
-  async function restartMonolith() {
-    // migrationApi.reset() brings the monolith back up (if a prior run
-    // decommissioned it) and resets migration step state — there's no
-    // separate "just restart the monolith" action, since one never
-    // actually existed as distinct backend behavior (see routers/migration.py).
-    setRestartBusy(true);
-    try {
-      const data = await migrationApi.reset();
-      setMigration(data);
-      if (backend === "monolith") refreshProducts("monolith");
-    } finally {
-      setRestartBusy(false);
-    }
-  }
-
-  async function refreshProducts(targetBackend: Backend, attempt = 1) {
+  async function refreshProducts(attempt = 1) {
     if (attempt === 1) {
       setLoading(true);
       setError(null);
     }
     try {
-      const data = await shopApi.listProducts(targetBackend);
+      const data = await shopApi.listProducts();
       setProducts(data.results);
       setLoading(false);
     } catch (err) {
-      // Azure Container Apps on the Consumption plan scale to zero when
-      // idle — a cold start can occasionally reset the connection instead
-      // of just being slow, surfacing as a generic "Failed to fetch" on the
-      // very first request after idle time. Retry a couple of times before
-      // showing the user an error, rather than making a transient wake-up
-      // blip look like a real outage.
+      // Azure Container Apps scale to zero when idle, and a cold start can reset the first
+      // connection. Retry twice before showing an error.
       if (attempt < 3) {
         await new Promise((resolve) => setTimeout(resolve, 2000 * attempt));
-        return refreshProducts(targetBackend, attempt + 1);
+        return refreshProducts(attempt + 1);
       }
       setError(String(err));
       setLoading(false);
     }
   }
 
-  function refreshCart(targetBackend: Backend, currentAuth: Auth | null) {
+  function refreshCart(currentAuth: Auth | null) {
     if (!currentAuth) {
       setCart(null);
       return;
     }
     shopApi
-      .getCart(targetBackend, currentAuth.apiKey)
+      .getCart(currentAuth.apiKey)
       .then((data) => setCart(data.result ?? null))
       .catch(() => setCart(null));
   }
 
   useEffect(() => {
-    // In cloud mode `backend` starts at its "monolith" default before the
-    // first migration-status poll resolves — fetching immediately would
-    // fire a doomed request once the monolith's actually been decommissioned
-    // (caught for real: this produced a confusing "Could not reach
-    // microservices" banner whose body was actually the stale monolith
-    // 503, because `backend` had already flipped to "microservices" by the
-    // time the error was set). Wait until `backend` agrees with what the
-    // migration engine says is actually live before fetching.
-    if (!migrationLoaded) return;
-    if (isCloud && migration && migration.active_backend !== backend) return;
-    const savedAuth = loadAuth(backend);
-    setAuth(savedAuth);
-    setCheckoutMessage(null);
-    refreshProducts(backend);
-    refreshCart(backend, savedAuth);
+    refreshProducts();
+    refreshCart(auth);
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [backend, migrationLoaded, isCloud, migration?.active_backend]);
+  }, []);
 
   async function handleAuthSubmit(e: FormEvent<HTMLFormElement>) {
     e.preventDefault();
@@ -151,13 +83,13 @@ export default function Shop() {
 
     try {
       if (authMode === "register") {
-        await shopApi.register(backend, username, email, password);
+        await shopApi.register(username, email, password);
       }
-      const { api_key } = await shopApi.login(backend, username, password);
+      const { api_key } = await shopApi.login(username, password);
       const newAuth = { username, apiKey: api_key };
       setAuth(newAuth);
-      saveAuth(backend, newAuth);
-      refreshCart(backend, newAuth);
+      saveAuth(newAuth);
+      refreshCart(newAuth);
     } catch (err) {
       setAuthError(String(err));
     } finally {
@@ -167,7 +99,7 @@ export default function Shop() {
 
   function logout() {
     setAuth(null);
-    saveAuth(backend, null);
+    saveAuth(null);
     setCart(null);
   }
 
@@ -175,7 +107,7 @@ export default function Shop() {
     if (!auth) return;
     setCartError(null);
     try {
-      const { result } = await shopApi.addToCart(backend, auth.apiKey, productId, 1);
+      const { result } = await shopApi.addToCart(auth.apiKey, productId, 1);
       setCart(result);
     } catch (err) {
       setCartError(String(err));
@@ -187,7 +119,7 @@ export default function Shop() {
     setCartError(null);
     setCheckoutMessage(null);
     try {
-      const { result } = await shopApi.checkout(backend, auth.apiKey);
+      const { result } = await shopApi.checkout(auth.apiKey);
       setCart(result);
       setCheckoutMessage("Order placed! Thank you.");
     } catch (err) {
@@ -204,10 +136,10 @@ export default function Shop() {
     ];
     try {
       for (const [name, slug, price] of samples) {
-        await shopApi.createProduct(backend, name, slug, price);
+        await shopApi.createProduct(name, slug, price);
       }
       setSeedStatus(null);
-      refreshProducts(backend);
+      refreshProducts();
     } catch (err) {
       setSeedStatus(`Could not add sample products: ${err}`);
     }
@@ -224,50 +156,17 @@ export default function Shop() {
       <section className="card">
         <h1>Shop</h1>
         <p className="muted">
-          The same catalog, same auth, same cart/checkout flow, served by whichever backend is
-          currently live — both run the identical API contract.
+          Every request goes through the API gateway, which routes it to the service that owns it:
+          accounts to <code>user</code>, products to <code>catalog</code>, cart and checkout to{" "}
+          <code>order</code>.
         </p>
-        <div style={{ display: "flex", gap: "0.5rem", marginTop: "0.75rem", alignItems: "center" }}>
-          {isCloud ? (
-            <span className="pill done">
-              Serving from: {backend === "monolith" ? "Monolith" : "Microservices"} (Azure)
-            </span>
-          ) : (
-            <>
-              <button
-                className={backend === "monolith" ? "btn" : "btn secondary"}
-                disabled={monolithDecommissioned}
-                title={monolithDecommissioned ? "The migration decommissioned the monolith process." : undefined}
-                onClick={() => setBackend("monolith")}
-              >
-                Monolith
-              </button>
-              <button className={backend === "microservices" ? "btn" : "btn secondary"} onClick={() => setBackend("microservices")}>
-                Microservices
-              </button>
-              {monolithDecommissioned && (
-                <span className="muted" style={{ fontSize: "0.85rem" }}>
-                  Decommissioned by the migration —{" "}
-                  <button
-                    className="btn secondary"
-                    style={{ padding: "0.15rem 0.5rem", fontSize: "0.85rem" }}
-                    disabled={restartBusy}
-                    onClick={restartMonolith}
-                  >
-                    {restartBusy ? "Restarting…" : "Restart monolith"}
-                  </button>
-                </span>
-              )}
-            </>
-          )}
-        </div>
       </section>
 
       <section className="card">
         {auth ? (
           <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center" }}>
             <span>
-              Signed in as <strong>{auth.username}</strong> ({backend})
+              Signed in as <strong>{auth.username}</strong>
             </span>
             <button className="btn secondary" onClick={logout}>
               Log out
@@ -298,26 +197,12 @@ export default function Shop() {
         )}
       </section>
 
-      {loading && <p className="muted">Loading products from {backend}…</p>}
-      {error && backend === "monolith" && monolithDecommissioned && (
+      {loading && <p className="muted">Loading products…</p>}
+      {error && (
         <div className="card" style={{ borderColor: "var(--contoso-danger)" }}>
-          <strong>The monolith was decommissioned.</strong>
-          <p className="muted">
-            The last migration run stopped the monolith process as its final step — that's expected,
-            not a bug. Switch to Microservices, or restart the monolith using the button above to
-            try it again.
-          </p>
-        </div>
-      )}
-      {error && !(backend === "monolith" && monolithDecommissioned) && (
-        <div className="card" style={{ borderColor: "var(--contoso-danger)" }}>
-          <strong>Could not reach {backend}.</strong>
+          <strong>Could not reach the shop.</strong>
           <p className="muted">{error}</p>
-          <p className="muted">
-            {backend === "microservices"
-              ? "If the microservices haven't been started yet, go to the Migrate page and run the migration first."
-              : "Make sure `make run` is running the monolith service."}
-          </p>
+          <p className="muted">Make sure `make run` is running the gateway and all services.</p>
         </div>
       )}
 

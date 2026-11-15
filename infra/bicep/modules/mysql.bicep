@@ -1,10 +1,10 @@
-@description('Azure Database for MySQL Flexible Server — cheapest Burstable B1ms tier, single server hosting 4 logical databases (documented cost tradeoff vs. 4 separate servers). This is the one resource in this project that bills whether idle or not.')
+@description('Azure Database for MySQL Flexible Server — cheapest Burstable B1ms tier, single server hosting one logical database per service (pattern 1; documented cost tradeoff vs. one server per service). This is the one resource in this project that bills whether idle or not.')
 param location string
 param name string
 param adminUsername string
 @secure()
 param adminPassword string
-param databaseNames array = ['monolith_db', 'user_db', 'product_db', 'order_db']
+param databaseNames array = ['user_db', 'catalog_db', 'order_db']
 
 resource server 'Microsoft.DBforMySQL/flexibleServers@2023-12-30' = {
   name: name

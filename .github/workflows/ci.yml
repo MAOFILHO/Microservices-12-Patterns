@@ -13,7 +13,7 @@ jobs:
     runs-on: ubuntu-latest
     strategy:
       fail-fast: false
-      # Each suite gets its own install: monolith/app, bff/app and every
+      # Each suite gets its own install: gateway/app and every
       # service's config.py share top-level module names, so they cannot
       # run in one interpreter (see CLAUDE.md, "collision note").
       matrix:
@@ -21,18 +21,18 @@ jobs:
           - suite: repo-root
             requirements: requirements-dev.txt
             tests: tests/unit
-          - suite: bff
-            requirements: bff/requirements.txt
-            tests: bff/tests
-          - suite: user-service
-            requirements: microservices/user-service/requirements.txt
-            tests: microservices/user-service/tests
-          - suite: product-service
-            requirements: microservices/product-service/requirements.txt
-            tests: microservices/product-service/tests
-          - suite: order-service
-            requirements: microservices/order-service/requirements.txt
-            tests: microservices/order-service/tests
+          - suite: gateway
+            requirements: gateway/requirements.txt
+            tests: gateway/tests
+          - suite: user
+            requirements: services/user/requirements.txt
+            tests: services/user/tests
+          - suite: catalog
+            requirements: services/catalog/requirements.txt
+            tests: services/catalog/tests
+          - suite: order
+            requirements: services/order/requirements.txt
+            tests: services/order/tests
     steps:
       - uses: actions/checkout@v4
 

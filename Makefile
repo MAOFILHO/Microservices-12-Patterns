@@ -1,13 +1,10 @@
-.PHONY: setup run run-all provision pause resume teardown verify test smoke benchmark clean
+.PHONY: setup run provision pause resume teardown verify test smoke clean
 
 setup:
 	python3.12 scripts/setup.py
 
 run:
 	python3.12 scripts/run_local.py
-
-run-all:
-	python3.12 scripts/run_local.py --all
 
 provision:
 	python3.12 infra/provision.py --budget-email "$(BUDGET_EMAIL)" $(ARGS)
@@ -26,16 +23,13 @@ verify:
 
 test:
 	.venv/bin/python -m pytest tests/unit -v
-	microservices/user-service/.venv/bin/python -m pytest microservices/user-service/tests -v
-	microservices/product-service/.venv/bin/python -m pytest microservices/product-service/tests -v
-	microservices/order-service/.venv/bin/python -m pytest microservices/order-service/tests -v
-	bff/.venv/bin/python -m pytest bff/tests -v
+	services/user/.venv/bin/python -m pytest services/user/tests -v
+	services/catalog/.venv/bin/python -m pytest services/catalog/tests -v
+	services/order/.venv/bin/python -m pytest services/order/tests -v
+	gateway/.venv/bin/python -m pytest gateway/tests -v
 
 smoke:
 	.venv/bin/python -m pytest tests/smoke -v
-
-benchmark:
-	bff/.venv/bin/python scripts/benchmark.py
 
 clean:
 	find . -name "instance" -type d -exec rm -rf {} + 2>/dev/null || true
