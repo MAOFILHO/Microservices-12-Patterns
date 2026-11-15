@@ -1,8 +1,9 @@
 """Signs login tokens (pattern 10). Only the user service holds the private key.
 
-Key source, in order: JWT_PRIVATE_KEY_PEM (Azure secret), else instance/jwt_private.pem, created
-on first start. Keeping the key in a file means restarting the service does not log anyone out.
+Key source, in order: JWT_PRIVATE_KEY_B64 (base64 PEM, the Azure Container Apps secret set by
+provision), JWT_PRIVATE_KEY_PEM, else instance/jwt_private.pem, created on first start. Keeping the key in a file means restarting the service does not log anyone out.
 """
+import base64
 import os
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
@@ -21,7 +22,9 @@ _private_pem: bytes | None = None
 def _private_key_pem() -> bytes:
     global _private_pem
     if _private_pem is None:
-        if os.environ.get("JWT_PRIVATE_KEY_PEM"):
+        if os.environ.get("JWT_PRIVATE_KEY_B64"):
+            _private_pem = base64.b64decode(os.environ["JWT_PRIVATE_KEY_B64"])
+        elif os.environ.get("JWT_PRIVATE_KEY_PEM"):
             _private_pem = os.environ["JWT_PRIVATE_KEY_PEM"].encode()
         elif KEY_FILE.exists():
             _private_pem = KEY_FILE.read_bytes()

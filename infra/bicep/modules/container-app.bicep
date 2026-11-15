@@ -1,4 +1,4 @@
-@description('One reusable Container App module — instantiated once per service from main.bicep (user, catalog, order, payment, inventory, gateway). Explicit cheap defaults: Consumption plan, minReplicas 0 (scale-to-zero), 0.25 vCPU / 0.5Gi.')
+@description('One reusable Container App module — instantiated once per service from main.bicep (user, catalog, order, payment, inventory, gateway, redis). Explicit cheap defaults: Consumption plan, minReplicas 0 (scale-to-zero), 0.25 vCPU / 0.5Gi.')
 param location string
 param name string
 param environmentId string
@@ -16,6 +16,13 @@ param cpu string = '0.25'
 param memory string = '0.5Gi'
 param envVars array = []
 param external bool = true
+@description('auto = HTTP(S). tcp for non-HTTP backends such as Redis; internal TCP needs no custom VNet.')
+param transport string = 'auto'
+@description('TCP only: the port other apps in the environment connect to. 0 = not set (HTTP apps).')
+param exposedPort int = 0
+@description('Extra secrets for this app only, e.g. the user service signing key: [{ name, value }].')
+@secure()
+param extraSecrets object = {}
 @description('Secret value for the AZURE_MYSQL_ADMIN_PASSWORD env var, referenced via secretRef so it never appears in plain env vars or deployment output.')
 @secure()
 param mysqlAdminPassword string
@@ -34,7 +41,8 @@ resource containerApp 'Microsoft.App/containerApps@2024-03-01' = {
       ingress: {
         external: external
         targetPort: targetPort
-        transport: 'auto'
+        transport: transport
+        exposedPort: exposedPort == 0 ? null : exposedPort
       }
       registries: [
         {
@@ -43,7 +51,7 @@ resource containerApp 'Microsoft.App/containerApps@2024-03-01' = {
           passwordSecretRef: 'acr-password'
         }
       ]
-      secrets: [
+      secrets: concat([
         {
           name: 'acr-password'
           value: acrPassword
@@ -52,7 +60,7 @@ resource containerApp 'Microsoft.App/containerApps@2024-03-01' = {
           name: 'mysql-password'
           value: mysqlAdminPassword
         }
-      ]
+      ], extraSecrets.?items ?? [])
     }
     template: {
       containers: [

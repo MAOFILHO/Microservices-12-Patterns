@@ -18,4 +18,6 @@ def runtime_info(service_name: str, instance: str) -> dict:
         "arch": platform.machine(),
         "python": platform.python_version(),
         "git_sha": os.environ.get("GIT_SHA", "local"),
+        # Set by the Deploy workflow from the registry's manifest; unknown otherwise.
+        "image_size_mb": int(os.environ["IMAGE_SIZE_MB"]) if os.environ.get("IMAGE_SIZE_MB", "").isdigit() else None,
     }

@@ -8,50 +8,47 @@ on:
   workflow_dispatch:
 
 jobs:
+  changes:
+    # Pattern 3: decide which suites and images this change needs (scripts/ci_changes.py).
+    # Pull requests run only what they touch; pushes to main and manual runs run everything.
+    name: What changed
+    runs-on: ubuntu-latest
+    outputs:
+      suites: ${{ steps.plan.outputs.suites }}
+      images: ${{ steps.plan.outputs.images }}
+      frontend: ${{ steps.plan.outputs.frontend }}
+      bicep: ${{ steps.plan.outputs.bicep }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Plan the jobs
+        id: plan
+        run: |
+          if [ "${{ github.event_name }}" = "pull_request" ]; then
+            git diff --name-only "origin/${{ github.base_ref }}...HEAD" | tee changed.txt | python scripts/ci_changes.py
+          else
+            python scripts/ci_changes.py --all
+          fi
+
   unit-tests:
     name: Unit tests (${{ matrix.suite }})
+    needs: changes
+    if: needs.changes.outputs.suites != '[]'
     runs-on: ubuntu-latest
     strategy:
       fail-fast: false
       # Each suite gets its own install: gateway/app and every
       # service's config.py share top-level module names, so they cannot
       # run in one interpreter (see CLAUDE.md, "collision note").
+      # Built from scripts/service_table.py by scripts/ci_changes.py: one entry per suite to run.
       matrix:
-        include:
-          - suite: repo-root
-            requirements: requirements-dev.txt
-            tests: tests/unit
-          - suite: gateway
-            requirements: gateway/requirements.txt
-            tests: gateway/tests
-            shared: fastapi
-          - suite: registry
-            requirements: registry/requirements.txt
-            tests: registry/tests
-          - suite: user
-            requirements: services/user/requirements.txt
-            tests: services/user/tests
-            shared: flask
-          - suite: catalog
-            requirements: services/catalog/requirements.txt
-            tests: services/catalog/tests
-            shared: flask
-            contracts: true
-          - suite: order
-            requirements: services/order/requirements.txt
-            tests: services/order/tests
-            shared: flask
-            contracts: true
-          - suite: payment
-            requirements: services/payment/requirements.txt
-            tests: services/payment/tests
-            shared: flask
-            contracts: true
-          - suite: inventory
-            requirements: services/inventory/requirements.txt
-            tests: services/inventory/tests
-            shared: flask
-            contracts: true
+        include: ${{ fromJSON(needs.changes.outputs.suites) }}
     steps:
       - uses: actions/checkout@v4
 
@@ -83,6 +80,8 @@ jobs:
 
   frontend:
     name: Frontend (build)
+    needs: changes
+    if: needs.changes.outputs.frontend == 'true'
     runs-on: ubuntu-latest
     defaults:
       run:
@@ -106,18 +105,13 @@ jobs:
     # Pattern 9. Builds every image exactly as Azure will run it (linux/amd64), starts it, and checks
     # it answers /health and does not run as root. Nothing is pushed anywhere.
     name: Container image (${{ matrix.image }})
+    needs: changes
+    if: needs.changes.outputs.images != '[]'
     runs-on: ubuntu-latest
     strategy:
       fail-fast: false
       matrix:
-        include:
-          - { image: user, dir: services/user, port: 5101, shared: true }
-          - { image: catalog, dir: services/catalog, port: 5102, shared: true }
-          - { image: order, dir: services/order, port: 5103, shared: true }
-          - { image: payment, dir: services/payment, port: 5104, shared: true }
-          - { image: inventory, dir: services/inventory, port: 5105, shared: true }
-          - { image: gateway, dir: gateway, port: 8100, shared: true }
-          - { image: registry, dir: registry, port: 8500, shared: false }
+        include: ${{ fromJSON(needs.changes.outputs.images) }}
     steps:
       - uses: actions/checkout@v4
 
@@ -148,6 +142,8 @@ jobs:
 
   bicep:
     name: Bicep (build)
+    needs: changes
+    if: needs.changes.outputs.bicep == 'true'
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4

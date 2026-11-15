@@ -1,10 +1,14 @@
-.PHONY: setup run provision pause resume teardown verify test contracts smoke clean
+.PHONY: setup run github-identity provision pause resume teardown verify test contracts smoke clean
 
 setup:
 	python3.12 scripts/setup.py
 
 run:
 	python3.12 scripts/run_local.py
+
+# Once, by the owner (#8): the Azure identity the Deploy workflow signs in as. No secrets created.
+github-identity:
+	python3.12 infra/github_identity.py
 
 provision:
 	python3.12 infra/provision.py --budget-email "$(BUDGET_EMAIL)" $(ARGS)

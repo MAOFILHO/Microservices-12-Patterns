@@ -136,3 +136,10 @@ def test_runtime_reports_the_gateway_without_a_user_name():
     assert gateway["service"] == "gateway"
     assert set(gateway) >= {"uid", "root", "in_container", "arch", "git_sha"}
     assert "user" not in gateway
+
+
+def test_runtime_reports_the_image_size_the_deploy_recorded(monkeypatch):
+    monkeypatch.setenv("IMAGE_SIZE_MB", "61")
+    assert client.get("/api/patterns/runtime").json()["processes"][0]["image_size_mb"] == 61
+    monkeypatch.delenv("IMAGE_SIZE_MB")
+    assert client.get("/api/patterns/runtime").json()["processes"][0]["image_size_mb"] is None

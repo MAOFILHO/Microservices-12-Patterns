@@ -1,6 +1,7 @@
 #!/usr/bin/env python3
-"""make provision — stands up the whole stack on Azure: user, catalog and order services
-plus the API gateway, each as its own Container App, and the React frontend.
+"""make provision — stands up the whole stack on Azure: the 5 services and the API gateway, each
+as its own Container App, Redis as the event bus, and the React frontend. Every image is tagged
+with the commit it was built from.
 
 Thin orchestrator: resolves collision-safe resource names, builds every
 service image in the cloud via `az acr build` (no local Docker daemon, and
@@ -16,6 +17,7 @@ repo-root .env's AZURE_LOCATION (see .env.example), falling back to `az
 config get defaults.location`, and only as a last resort the constant below.
 """
 import argparse
+import base64
 import json
 import os
 import secrets
@@ -60,8 +62,40 @@ def load_dotenv_defaults() -> None:
 sys.path.insert(0, str(REPO_ROOT / "scripts"))
 from service_table import PYTHON_SERVICES  # noqa: E402
 
-# Image name -> build context. Image names match Container App names in main.bicep.
-SERVICES = {svc.name: svc.path for svc in PYTHON_SERVICES}
+# Image name -> build context, for every image Azure runs. Image names match Container App names in
+# main.bicep. The registry is local only: in Azure, Container Apps DNS does service discovery.
+AZURE_SERVICES = {svc.name: svc.path for svc in PYTHON_SERVICES if svc.name != "registry"}
+SERVICES = AZURE_SERVICES  # teardown/state code reads this name
+
+
+REDIS_IMAGE = "redis:7.4-alpine"  # keep in step with redisImageTag in main.bicep
+
+
+def redis_import_args(resource_group: str, acr_name: str) -> list[str]:
+    """Copies Redis from Docker Hub into our ACR once, so Container Apps never pulls from Docker
+    Hub (rate limits). The image is multi-arch; Container Apps picks its linux/amd64 variant."""
+    return ["acr", "import", "--name", acr_name, "--resource-group", resource_group,
+            "--source", f"docker.io/library/{REDIS_IMAGE}", "--image", REDIS_IMAGE, "--force"]
+
+
+def generate_jwt_key_b64() -> str:
+    """A fresh RSA key for the user service to sign login tokens (pattern 10), base64 on one line
+    so it passes cleanly as a deployment parameter. Uses the openssl CLI: provision runs on plain
+    python3.12, without the cryptography package."""
+    pem = subprocess.run(["openssl", "genpkey", "-algorithm", "RSA", "-pkeyopt", "rsa_keygen_bits:2048"],
+                         capture_output=True, check=True).stdout
+    return base64.b64encode(pem).decode()
+
+
+def container_apps_for_state() -> dict[str, str]:
+    """Every Container App provision creates, for pause/resume/teardown to find. Includes Redis."""
+    return {name: name for name in [*AZURE_SERVICES, "redis"]}
+
+
+def image_tag() -> str:
+    """The commit being deployed, so every image and every running app says what it was built from."""
+    return subprocess.run(["git", "rev-parse", "--short=12", "HEAD"], cwd=REPO_ROOT,
+                          capture_output=True, text=True, check=True).stdout.strip()
 
 
 def _redact_secrets(args: list[str]) -> list[str]:
@@ -190,8 +224,8 @@ def wait_for_acr_ready(resource_group: str, acr_name: str, timeout: float = 60.0
     print(f"Warning: ACR '{acr_name}' still not queryable after {timeout}s — proceeding anyway.")
 
 
-def build_images(resource_group: str, acr_name: str) -> None:
-    for service_name, service_dir in SERVICES.items():
+def build_images(resource_group: str, acr_name: str, tag: str) -> None:
+    for service_name, service_dir in AZURE_SERVICES.items():
         print(f"\n=== az acr build: {service_name} (cloud-side, no local Docker) ===")
         # `az acr build` only uploads the service's own folder, so stage a copy of shared/
         # (shop_common) inside it as _shared/. Each Dockerfile installs ./_shared. Gitignored.
@@ -199,37 +233,33 @@ def build_images(resource_group: str, acr_name: str) -> None:
         shutil.rmtree(staged, ignore_errors=True)
         shutil.copytree(REPO_ROOT / "shared", staged, ignore=shutil.ignore_patterns("*.egg-info", "__pycache__"))
         try:
-            _acr_build(resource_group, acr_name, service_name, service_dir)
+            run_az(acr_build_args(resource_group, acr_name, service_name, service_dir, tag), capture=False)
         finally:
             shutil.rmtree(staged, ignore_errors=True)
 
 
-def _acr_build(resource_group: str, acr_name: str, service_name: str, service_dir: Path) -> None:
-    run_az([
+def acr_build_args(resource_group: str, acr_name: str, service_name: str, service_dir: Path, tag: str) -> list[str]:
+    return [
         "acr", "build",
         "--registry", acr_name,
         "--resource-group", resource_group,
-        "--image", f"{service_name}:latest",
+        "--image", f"{service_name}:{tag}",
+        # Inside the image: GIT_SHA, which /debug/runtime reports (pattern 9).
+        "--build-arg", f"GIT_SHA={tag}",
         # Explicit: Container Apps runs amd64, and the owner's Mac is arm64.
         "--platform", "linux/amd64",
         str(service_dir),
-    ], capture=False)
+    ]
 
 
-def deploy_bicep(resource_group: str, location: str, names: dict, mysql_password: str, keep_warm: bool) -> dict:
-    print("\n=== Deploying infra/bicep/main.bicep ===")
-    # Static Web Apps is only available in a handful of regions (Central US,
-    # East US 2, West US 2, West Europe, East Asia) — NOT every region that
-    # supports Container Apps/MySQL/etc (plain "East US" doesn't support it,
-    # which is a real failure discovered running this for the first time).
-    # Kept independently configurable via .env so it's still never hardcoded
-    # as the only option.
+def bicep_parameters(location: str, names: dict, mysql_password: str, keep_warm: bool, tag: str,
+                     jwt_key_b64: str) -> list[str]:
+    # Static Web Apps is only available in a handful of regions (Central US, East US 2, West US 2,
+    # West Europe, East Asia) — NOT every region that supports Container Apps/MySQL/etc (plain
+    # "East US" doesn't support it, a real failure found the first time this ran). Kept
+    # configurable via .env so it is never hardcoded as the only option.
     static_web_app_location = os.environ.get("AZURE_STATIC_WEB_APP_LOCATION", "eastus2").strip() or "eastus2"
-    result = run_az([
-        "deployment", "group", "create",
-        "--resource-group", resource_group,
-        "--template-file", str(BICEP_FILE),
-        "--parameters",
+    return [
         f"location={location}",
         f"staticWebAppLocation={static_web_app_location}",
         f"acrName={names['acr_name']}",
@@ -240,6 +270,18 @@ def deploy_bicep(resource_group: str, location: str, names: dict, mysql_password
         f"mysqlAdminUsername={MYSQL_ADMIN_USERNAME}",
         f"mysqlAdminPassword={mysql_password}",
         f"keepWarm={'true' if keep_warm else 'false'}",
+        f"imageTag={tag}",
+        f"jwtPrivateKeyB64={jwt_key_b64}",
+    ]
+
+
+def deploy_bicep(resource_group: str, parameters: list[str]) -> dict:
+    print("\n=== Deploying infra/bicep/main.bicep ===")
+    result = run_az([
+        "deployment", "group", "create",
+        "--resource-group", resource_group,
+        "--template-file", str(BICEP_FILE),
+        "--parameters", *parameters,
     ])
     return json.loads(result.stdout)["properties"]["outputs"]
 
@@ -327,6 +369,10 @@ def main() -> int:
     print(f"Subscription: {subscription_id}  Location: {location}")
 
     ensure_resource_group(args.resource_group, location)
+    # Teardown deletes the group and with it the Deploy identity's role (#8): grant it again.
+    from github_identity import grant_role_if_identity_exists
+
+    grant_role_if_identity_exists(subscription_id, args.resource_group)
 
     if args.reuse_names:
         print("\n=== Reusing existing resource names (--reuse-names) ===")
@@ -355,6 +401,9 @@ def main() -> int:
         print(f"  {key}: {value}")
 
     mysql_password = generate_mysql_password()
+    jwt_key_b64 = generate_jwt_key_b64()
+    tag = image_tag()
+    print(f"  image tag: {tag} (the commit being deployed)")
 
     if not args.skip_build:
         run_az([
@@ -373,17 +422,20 @@ def main() -> int:
             "--admin-enabled", "true",
         ])
         wait_for_acr_ready(args.resource_group, names["acr_name"])
-        build_images(args.resource_group, names["acr_name"])
+        print("\n=== az acr import: redis (event bus, pattern 7) ===")
+        run_az(redis_import_args(args.resource_group, names["acr_name"]), capture=False)
+        build_images(args.resource_group, names["acr_name"], tag)
 
     try:
-        outputs = deploy_bicep(args.resource_group, location, names, mysql_password, args.keep_warm)
+        parameters = bicep_parameters(location, names, mysql_password, args.keep_warm, tag, jwt_key_b64)
+        outputs = deploy_bicep(args.resource_group, parameters)
     except subprocess.CalledProcessError as exc:
         # Never let the real password leak into a traceback or log — redact
         # it from stderr/stdout before printing (caught for real: the first
         # run of this script hit a genuine Bicep failure — Static Web Apps
         # isn't available in every region — and the unhandled traceback here
         # didn't show the actual az error at all, only a stack trace).
-        stderr = (exc.stderr or "").replace(mysql_password, "***REDACTED***")
+        stderr = (exc.stderr or "").replace(mysql_password, "***REDACTED***").replace(jwt_key_b64, "***REDACTED***")
         print(f"\nBicep deployment failed:\n{stderr}")
         return 1
     output_values = {k: v["value"] for k, v in outputs.items()}
@@ -405,7 +457,7 @@ def main() -> int:
         "mysql_admin_username": MYSQL_ADMIN_USERNAME,
         "mysql_admin_password": mysql_password,
         "acr_password": acr_password,
-        "container_apps": {name: name for name in SERVICES},
+        "container_apps": container_apps_for_state(),
     }
     STATE_FILE.parent.mkdir(parents=True, exist_ok=True)
     STATE_FILE.write_text(json.dumps(state, indent=2))

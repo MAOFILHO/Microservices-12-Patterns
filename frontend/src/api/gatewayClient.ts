@@ -289,6 +289,7 @@ export interface RuntimeInfo {
   arch?: string;
   python?: string;
   git_sha?: string;
+  image_size_mb?: number | null;
   unreachable?: boolean;
 }
 

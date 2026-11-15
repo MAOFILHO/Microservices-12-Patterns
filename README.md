@@ -142,7 +142,22 @@ collector. Without it, traces stay in each process's memory and the Observabilit
 
 ## Cloud
 
-Azure Container Apps (one app per service plus the gateway, all scale-to-zero) + MySQL Flexible
-Server, provisioned with `make provision` and removed with `make teardown`. About $0.21 for an
-8-hour session. See [cost_estimate.md](cost_estimate.md). Nothing from M1, M2 or M3a has been deployed
-yet. In Azure, discovery uses Container Apps DNS (no registry), and the demo switches stay off.
+Azure Container Apps (one app per service plus the gateway, all scale-to-zero; Redis as an
+always-on internal bus) + MySQL Flexible Server. About $0.21 for an 8-hour session; see
+[cost_estimate.md](cost_estimate.md). In Azure, discovery uses Container Apps DNS (no registry), and
+the demo switches stay off. Nothing has been deployed yet: the first Azure run is issue #11.
+
+```bash
+make github-identity   # once: the Azure identity the Deploy workflow uses (OIDC, no secret)
+make provision BUDGET_EMAIL=you@example.com   # everything, images tagged with the current commit
+# then GitHub → Actions → Deploy → Run workflow: rebuilds only the services that changed
+make teardown && make verify                    # remove everything, then prove nothing is left
+```
+
+### CI-CD (pattern 3)
+- **CI on every pull request** runs only what the change touches (`scripts/ci_changes.py`, driven
+  by the service table): a change to one service runs its tests and its image; a change to shared
+  code, CI or the service table runs everything. Pushes to main run everything.
+- **Deploy** is a manual workflow on main. It signs in to Azure with OIDC (no password stored),
+  rebuilds only services whose code changed since the commit they run, tags each image with the
+  commit, and records each image's size.

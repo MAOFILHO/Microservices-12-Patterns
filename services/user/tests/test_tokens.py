@@ -34,3 +34,26 @@ def test_public_key_verifies_the_token(client):
     token = _register_and_login(client)["token"]
     key = client.get("/api/user/public-key").get_json()["public_key_pem"]
     assert jwt.decode(token, key, algorithms=["RS256"], issuer="ms12p-user")["username"] == "bob"
+
+
+def test_signing_key_can_come_from_the_azure_secret(client, monkeypatch, tmp_path):
+    """In Azure, provision passes the key base64-encoded in JWT_PRIVATE_KEY_B64 (a Container Apps
+    secret), so every replica and every restart signs with the same key."""
+    import base64
+
+    import jwt
+    from cryptography.hazmat.primitives import serialization
+    from cryptography.hazmat.primitives.asymmetric import rsa
+
+    from application import tokens
+
+    key = rsa.generate_private_key(public_exponent=65537, key_size=2048)
+    pem = key.private_bytes(serialization.Encoding.PEM, serialization.PrivateFormat.PKCS8, serialization.NoEncryption())
+    monkeypatch.setenv("JWT_PRIVATE_KEY_B64", base64.b64encode(pem).decode())
+    monkeypatch.setattr(tokens, "_private_pem", None)
+    monkeypatch.setattr(tokens, "KEY_FILE", tmp_path / "unused.pem")
+
+    token = _register_and_login(client, "carol")["token"]
+    public = key.public_key().public_bytes(serialization.Encoding.PEM, serialization.PublicFormat.SubjectPublicKeyInfo)
+    assert jwt.decode(token, public, algorithms=["RS256"], issuer="ms12p-user")["username"] == "carol"
+    assert not (tmp_path / "unused.pem").exists()

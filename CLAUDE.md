@@ -47,7 +47,17 @@ history, monolith dropped). The full agreed plan is in [`docs/PLAN.md`](docs/PLA
 - Background threads (heartbeat, relay, consumer) start only where `is_serving_process(app)` is true:
   Flask's debug reloader runs a watcher plus a worker, and both build the app.
 - Containers (pattern 9): multi-stage Dockerfiles, uid 10001, `.dockerignore` per service, `GIT_SHA`
-  build arg, `/debug/runtime`. CI job "Container image" builds, runs and checks all 7 images.
+  build arg, `/debug/runtime` (also `image_size_mb` from `IMAGE_SIZE_MB`). CI job "Container image"
+  builds, runs and checks the images a change touches.
+- CI-CD (pattern 3, M3b): `scripts/ci_changes.py` turns changed files into the CI matrices (suites,
+  images, frontend, bicep) from the service table. `.github/workflows/deploy.yml` is manual, main
+  only, OIDC via `infra/github_identity.py` (`make github-identity`, run by the owner; ids stored as
+  GitHub secrets so they stay masked in public logs); `scripts/deploy_plan.py` picks services whose
+  code changed since their running commit. Actions in deploy.yml are pinned to commit SHAs.
+- Azure (M3b): provision tags images with the 12-char commit, imports `redis:7.4-alpine` into ACR,
+  generates the JWT key (`openssl`, passed base64 as a secure param, user reads `JWT_PRIVATE_KEY_B64`),
+  and re-grants the deploy identity's role on the new resource group. Redis is an internal TCP app
+  (`redis://redis:6379/0`), 1 replica; `make resume` keeps it at exactly 1. Registry is not deployed.
 - **`shop_common`** (`shared/`): every service calls `shop_common.flask_support.install(app, name, db)`
   inside its app context. It adds `/health`, `/health/db`, `/debug/spans`, `/metrics`,
   `POST /debug/crash` (only with `CHAOS_ENABLED=1`), the `X-Instance-Id` header, tracing, JSON logs,
