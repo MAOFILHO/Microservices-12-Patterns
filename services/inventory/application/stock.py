@@ -6,6 +6,8 @@ commit:   reserved  -> sold          (on OrderConfirmed: on hand goes down)
 
 Each is idempotent: calling it again for the same reservation changes nothing.
 """
+from sqlalchemy.exc import IntegrityError
+
 from . import db
 from .models import Reservation, StockItem
 
@@ -19,10 +21,17 @@ def _lock(product_id: int) -> StockItem | None:
     return db.session.query(StockItem).filter_by(product_id=product_id).with_for_update().one_or_none()
 
 
+def _in_lock_order(items: list[dict]) -> list[dict]:
+    """Always lock stock rows in product id order, so two checkouts for the same products cannot
+    each hold one row and wait for the other's (a deadlock on MySQL)."""
+    return sorted(items, key=lambda line: line["product_id"])
+
+
 def reserve(reservation_id: str, order_id: int, items: list[dict]) -> Reservation:
     existing = db.session.get(Reservation, reservation_id)
     if existing is not None:
         return existing
+    items = _in_lock_order(items)
     short = []
     for line in items:
         stock = _lock(line["product_id"])
@@ -36,7 +45,11 @@ def reserve(reservation_id: str, order_id: int, items: list[dict]) -> Reservatio
         _lock(line["product_id"]).reserved += line["quantity"]
     reservation = Reservation(id=reservation_id, order_id=order_id, items=items, status="RESERVED")
     db.session.add(reservation)
-    db.session.commit()
+    try:
+        db.session.commit()
+    except IntegrityError:  # the same hold, sent twice at once, landed first: keep that one
+        db.session.rollback()
+        return db.session.get(Reservation, reservation_id)
     return reservation
 
 
@@ -44,7 +57,7 @@ def release(reservation_id: str) -> Reservation | None:
     reservation = db.session.get(Reservation, reservation_id)
     if reservation is None or reservation.status != "RESERVED":
         return reservation
-    for line in reservation.items:
+    for line in _in_lock_order(reservation.items):
         _lock(line["product_id"]).reserved -= line["quantity"]
     reservation.status = "RELEASED"
     db.session.commit()
@@ -55,7 +68,7 @@ def commit(reservation_id: str) -> Reservation | None:
     reservation = db.session.get(Reservation, reservation_id)
     if reservation is None or reservation.status != "RESERVED":
         return reservation
-    for line in reservation.items:
+    for line in _in_lock_order(reservation.items):
         stock = _lock(line["product_id"])
         stock.reserved -= line["quantity"]
         stock.on_hand -= line["quantity"]

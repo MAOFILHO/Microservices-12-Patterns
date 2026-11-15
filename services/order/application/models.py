@@ -82,3 +82,14 @@ class OutboxEvent(db.Model):
             "attempts": self.attempts,
             "last_error": self.last_error,
         }
+
+
+class CheckoutLock(db.Model):
+    """At most one checkout saga per order at a time. The primary key makes a second insert fail,
+    even from the other replica, so a double click cannot hold stock or charge twice."""
+
+    __tablename__ = "checkout_lock"
+
+    order_id = db.Column(db.Integer, primary_key=True, autoincrement=False)
+    saga_id = db.Column(db.String(36), nullable=False)
+    started_at = db.Column(db.DateTime, nullable=False, default=_utcnow)

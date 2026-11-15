@@ -19,7 +19,6 @@ RUN useradd --uid 10001 --no-create-home --shell /usr/sbin/nologin app
 WORKDIR /app
 COPY --from=build /opt/venv /opt/venv
 COPY --chown=10001:10001 . .
-RUN rm -rf _shared
 USER 10001
 EXPOSE 8500
 

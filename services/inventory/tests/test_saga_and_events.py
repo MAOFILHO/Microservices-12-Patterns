@@ -3,14 +3,14 @@ import pytest
 
 from application import consumer, db, stock
 from application.models import StockItem
-from application.seed import seed_stock_if_empty
+from application.seed import seed_missing_stock
 
 RID = "saga-0001-aaaa"
 
 
 @pytest.fixture
 def seeded(app):
-    seed_stock_if_empty()
+    seed_missing_stock()
     return app
 
 
@@ -72,3 +72,10 @@ def test_restock_is_a_demo_switch(seeded, client, monkeypatch):
     assert client.post("/api/inventory/1/restock", json={"quantity": 5}).status_code == 403
     monkeypatch.setenv("CHAOS_ENABLED", "1")
     assert client.post("/api/inventory/1/restock", json={"quantity": 5}).get_json()["result"]["on_hand"] == 30
+
+
+def test_restock_rejects_bad_input_with_400(seeded, client, monkeypatch):
+    monkeypatch.setenv("CHAOS_ENABLED", "1")
+    assert client.post("/api/inventory/1/restock", json={"quantity": "lots"}).status_code == 400
+    assert client.post("/api/inventory/1/restock", json={"quantity": 0}).status_code == 400
+    assert client.post("/api/inventory/999/restock", json={"quantity": 5}).status_code == 404

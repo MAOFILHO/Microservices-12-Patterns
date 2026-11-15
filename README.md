@@ -4,11 +4,11 @@ A small Contoso e-commerce system that shows **12 microservices patterns working
 Each pattern gets its own page with an explanation, when *not* to use it, and a live demo you
 can click.
 
-> **Status: M2, resilience and independence.** 8 of 12 patterns are live: M1's Database per
-> Service, Bounded Context, API Gateway and Observability, plus M2's Circuit Breaker, Stateless
-> Services, Contract Testing and Service Discovery. The foundation is copied from
+> **Status: M3a, async and packaging.** 11 of 12 patterns are live. M3a adds the Saga,
+> Event-Driven Architecture and Containerization to M1 (patterns 1, 2, 5, 6) and M2 (4, 10, 11, 12).
+> The foundation is copied from
 > [Azure-Ecommerce-Monolith-Microservices-Migration](https://github.com/MAOFILHO/Azure-Ecommerce-Monolith-Microservices-Migration).
-> The last 4 arrive in milestone M3. See [docs/PLAN.md](docs/PLAN.md).
+> CI-CD and the Azure run arrive in M3b. See [docs/PLAN.md](docs/PLAN.md).
 
 ## The 12 patterns
 
@@ -16,13 +16,13 @@ can click.
 |---|---|---|---|
 | 1 | Database per Service | Gives each service its own database | **Live (M1)** |
 | 2 | Bounded Context | Splits one large domain into clear business domains | **Live (M1)** |
-| 3 | CI-CD Pipeline | Builds, tests and deploys every service automatically | M3 |
+| 3 | CI-CD Pipeline | Builds, tests and deploys every service automatically | M3b |
 | 4 | Circuit Breaker | Stops calls to a failing service to prevent more failures | **Live (M2)** |
 | 5 | API Gateway | Routes client requests to the right service | **Live (M1)** |
 | 6 | Observability | Collects logs, metrics and traces from every service | **Live (M1)** |
-| 7 | Event-Driven Architecture | Services communicate by publishing and consuming events | M3 |
-| 8 | Saga Pattern | Coordinates distributed transactions and rolls back failures safely | M3 |
-| 9 | Containerization | Packages each service with all its dependencies | M3 |
+| 7 | Event-Driven Architecture | Services communicate by publishing and consuming events | **Live (M3a)** |
+| 8 | Saga Pattern | Coordinates distributed transactions and rolls back failures safely | **Live (M3a)** |
+| 9 | Containerization | Packages each service with all its dependencies | **Live (M3a)** |
 | 10 | Stateless Services | Stores session data outside the service | **Live (M2)** |
 | 11 | Contract Testing | Checks that APIs stay compatible across services | **Live (M2)** |
 | 12 | Service Discovery | Finds service instances automatically at runtime | **Live (M2)** |
@@ -32,11 +32,12 @@ can click.
 ```
 Browser → API gateway ──┬──► user        → user_db      (signs login tokens)
   (checks tokens,       ├──► catalog     → catalog_db
-   request IDs,         ├──► order ×2    → order_db ──► catalog (prices)
-   tracing, metrics,    │                            └─► payment, behind a circuit breaker
+   request IDs,         ├──► order ×2    → order_db     checkout saga: price → hold stock →
+   tracing, metrics,    │                               charge (circuit breaker) → confirm
    aggregation,         ├──► payment     → payment_db
    failover)            └──► inventory   → inventory_db
 
+order_db outbox ──relay──► Redis Stream "shop.events" ──► inventory (sells the held stock)
 Every service heartbeats into the registry (:8500); callers look each other up there.
 ```
 
@@ -47,11 +48,13 @@ Every service heartbeats into the registry (:8500); callers look each other up t
 - **`shop_common`** (`shared/`): OpenTelemetry tracing, JSON logs with trace IDs, Prometheus
   metrics, the `/health/db`, `/debug/spans`, `/metrics` endpoints, token checks and the discovery client.
 - **Service registry** (`registry/`): about 90 lines of FastAPI. Local only; Azure uses Container Apps DNS.
-- **Contracts** (`contracts/pacts/`): the Pact files the order service needs payment and catalog to honour.
+- **Contracts** (`contracts/pacts/`): the Pact files the order service needs payment, catalog and inventory to honour.
+- **Redis** (Homebrew `redis-server`, in memory, port 6390): the event bus. `make run` starts and stops it.
+- **Dockerfiles**: one per service plus gateway and registry, multi-stage, non-root, built only in
+  the cloud or CI for `linux/amd64`.
 - **React + TypeScript** frontend (`frontend/`) with a page per pattern.
 
-Still to come (M3): Redis Streams events with an outbox, checkout saga, hardened containers,
-deploy pipeline, and a real Azure run.
+Still to come (M3b): path-filtered CI with a manual Deploy workflow (OIDC), and a real Azure run.
 
 ## The live demos
 
@@ -105,11 +108,30 @@ The live registry. Stop an instance: its heartbeat stops, the registry expires i
 
 <img width="100%" alt="Service Discovery demo: registry table and an expired then re-registered order replica" src="docs/screenshots/p12-service-discovery.jpg" />
 
+### 7. Event-Driven Architecture
+Disconnect the bus and buy a mug: OrderConfirmed waits in the order service's outbox, and the mug
+stays held in inventory. Reconnect: the event goes out and inventory turns the hold into a sale.
+
+<img width="100%" alt="Event-Driven demo: bus disconnected, one OrderConfirmed waiting in the outbox, one mug held" src="docs/screenshots/p07-event-driven.jpg" />
+
+### 8. Saga
+Buy 2 mugs with "make the bank decline the card" ticked. The saga prices the cart, holds the stock,
+the charge fails, and it releases the stock. Stock ends exactly where it started; the cart is kept.
+
+<img width="100%" alt="Saga demo: a declined card, with the stock hold released by the compensation step" src="docs/screenshots/p08-saga.jpg" />
+
+### 9. Containerization
+How each process runs (uid, container or not, platform, build). Locally they are plain processes;
+CI builds and runs every image for linux/amd64 and fails any that runs as root.
+
+<img width="100%" alt="Containerization demo: every process, its uid and platform, and the Dockerfile shape" src="docs/screenshots/p09-containerization.jpg" />
+
 ## Run locally (no Docker)
 
 ```bash
+brew install redis   # once: the event bus (patterns 7 and 8)
 make setup    # one venv per service + gateway, shop_common, frontend packages
-make run      # frontend http://127.0.0.1:5273, gateway http://127.0.0.1:8100, registry :8500
+make run      # frontend :5273, gateway :8100, registry :8500, Redis :6390
 make test     # unit tests, each suite in its own venv
 make contracts  # Pact: order writes its contracts, payment and catalog verify them
 make smoke    # end-to-end checks against the running stack
@@ -122,5 +144,5 @@ collector. Without it, traces stay in each process's memory and the Observabilit
 
 Azure Container Apps (one app per service plus the gateway, all scale-to-zero) + MySQL Flexible
 Server, provisioned with `make provision` and removed with `make teardown`. About $0.21 for an
-8-hour session. See [cost_estimate.md](cost_estimate.md). Nothing from M1 or M2 has been deployed
+8-hour session. See [cost_estimate.md](cost_estimate.md). Nothing from M1, M2 or M3a has been deployed
 yet. In Azure, discovery uses Container Apps DNS (no registry), and the demo switches stay off.

@@ -44,19 +44,55 @@ def from_fields(fields: dict) -> dict:
     return {**fields, "payload": json.loads(fields.get("payload") or "{}")}
 
 
-def start_consumer(group: str, consumer: str, handle: Callable[[dict], None], log=None) -> threading.Thread | None:
-    """Reads the stream as `consumer` in `group` on a background thread and acks each handled event.
+MAX_ATTEMPTS = 5
+DEAD_LETTER_STREAM = "shop.events.dead"
 
-    handle() gets the decoded event. If it raises, the event is not acked and is retried on the
-    next pass. Returns None when no bus is configured.
+
+class Reader:
+    """One consumer in a consumer group. read_once() is one pass; start_consumer() loops it.
+
+    Alternates between new events (">") and this consumer's own unacknowledged ones ("0"), so a
+    failing event is retried without holding back the events behind it. After MAX_ATTEMPTS it is
+    copied to the dead-letter stream and acknowledged, for a person to look at.
     """
+
+    def __init__(self, group: str, consumer: str, handle: Callable[[dict], None], log=None):
+        self.group, self.consumer, self.handle, self.log = group, consumer, handle, log
+        self.start_id = "0"  # first pass: our own unacked events from before a restart
+        self.failures: dict[str, int] = {}
+
+    def read_once(self, client) -> None:
+        start_id = self.start_id
+        batches = client.xreadgroup(self.group, self.consumer, {STREAM: start_id}, count=20, block=2000)
+        messages = batches[0][1] if batches else []
+        for message_id, fields in messages:
+            try:
+                self.handle(from_fields(fields))
+                client.xack(STREAM, self.group, message_id)
+                self.failures.pop(message_id, None)
+            except Exception as exc:
+                attempts = self.failures.get(message_id, 0) + 1
+                self.failures[message_id] = attempts
+                if self.log:
+                    self.log.warning(f"event {message_id} failed (attempt {attempts}): {exc}")
+                if attempts >= MAX_ATTEMPTS:
+                    client.xadd(DEAD_LETTER_STREAM, {**fields, "group": self.group, "error": str(exc)[:200]})
+                    client.xack(STREAM, self.group, message_id)
+                    self.failures.pop(message_id, None)
+        # Retry failures on the next pass, new events on the one after: neither starves the other.
+        self.start_id = "0" if start_id == ">" and self.failures else ">"
+
+
+def start_consumer(group: str, consumer: str, handle: Callable[[dict], None], log=None) -> threading.Thread | None:
+    """Runs a Reader on a background thread. Returns None when no bus is configured."""
     if not redis_url():
         return None
+    reader = Reader(group, consumer, handle, log)
 
     def loop() -> None:
         import redis
 
-        client, start_id = None, "0"  # "0" first: our own unacked events from before a restart
+        client = None
         while True:
             try:
                 if client is None:
@@ -66,19 +102,9 @@ def start_consumer(group: str, consumer: str, handle: Callable[[dict], None], lo
                     except redis.ResponseError as exc:
                         if "BUSYGROUP" not in str(exc):
                             raise
-                batches = client.xreadgroup(group, consumer, {STREAM: start_id}, count=20, block=2000)
-                messages = batches[0][1] if batches else []
-                if start_id == "0" and not messages:
-                    start_id = ">"  # backlog done, now only new events
-                for message_id, fields in messages:
-                    try:
-                        handle(from_fields(fields))
-                        client.xack(STREAM, group, message_id)
-                    except Exception as exc:  # leave it unacked; it is retried from "0" next pass
-                        if log:
-                            log.warning(f"event {message_id} failed: {exc}")
-                        start_id = "0"
-                        time.sleep(1)  # do not spin on an event that keeps failing
+                reader.read_once(client)
+                if reader.failures:
+                    time.sleep(1)  # do not spin on an event that keeps failing
             except (redis.ConnectionError, redis.TimeoutError, OSError):
                 client = None
                 time.sleep(2)

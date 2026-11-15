@@ -10,9 +10,9 @@ HOLD_ID = "3f0c1d2e-0000-4000-8000-000000000001"
 def test_inventory_honours_the_order_services_contract(app):
     from application import db, stock
     from application.models import Reservation
-    from application.seed import seed_stock_if_empty
+    from application.seed import seed_missing_stock
 
-    seed_stock_if_empty()
+    seed_missing_stock()
     # Pact calls the state handlers on another thread. End this thread's transaction first, or
     # SQLite's write lock makes the handlers wait forever.
     db.session.commit()

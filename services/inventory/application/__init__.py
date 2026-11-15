@@ -34,9 +34,9 @@ def create_app(config_name: str | None = None) -> Flask:
 
         app.register_blueprint(inventory_api)
         db.create_all()
-        from .seed import seed_stock_if_empty
+        from .seed import seed_missing_stock
 
-        seed_stock_if_empty()
+        seed_missing_stock()
         install_observability(app, "inventory", db)
 
         # Pattern 7: act on OrderConfirmed events from the bus (no-op without REDIS_URL).

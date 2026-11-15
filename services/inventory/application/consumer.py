@@ -17,6 +17,8 @@ def handle(event: dict) -> None:
     if db.session.get(ConsumedEvent, event["event_id"]) is not None:
         return  # seen before: at-least-once delivery sent it twice
     reservation_id = event["payload"].get("reservation_id")
+    # action() commits on its own. If we crash before the ConsumedEvent row below, the event is
+    # redelivered and action() is a no-op the second time (it checks the reservation's status).
     reservation = action(reservation_id)
     outcome = f"reservation {reservation.status}" if reservation else "no such reservation"
     db.session.add(ConsumedEvent(event_id=event["event_id"], type=event["type"],

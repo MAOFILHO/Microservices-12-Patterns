@@ -156,3 +156,15 @@ Decisions:
    consumer, hardened containers), all local, about 2 days. M3b = pattern 3 (path-filtered CI, OIDC
    Deploy workflow, Azure identity setup) plus the one real Azure run, about 1 day, started only on the
    owner's go-ahead after M3a merges.
+
+M3a code review (Matt Pocock code-review skill, 2 axes) — what changed after it:
+- Fixed: one failing event no longer blocks the ones behind it (retry, then dead-letter stream after
+  5 tries); one checkout per order at a time (`checkout_lock`); stock rows locked in product order;
+  a duplicate hold insert returns the existing hold; a payment timeout no longer claims "nothing was
+  charged"; restock input validated; the decline switch needs `CHAOS_ENABLED=1`.
+- Spec gaps closed: every saga step publishes an event (StockReserved, PaymentCharged,
+  OrderConfirmed, CheckoutFailed); a timed-out stock hold is released through the bus.
+- Wording: the "stop the bus" demo disconnects the order service's relay from Redis. It does not stop
+  Redis itself; a real Redis outage behaves the same for the publisher (events wait in the outbox).
+- Moved to M3b: SHA image tags and the GIT_SHA build arg on the `az acr build` path (provision), image
+  size on the Containerization page (it is in the CI run summary today).

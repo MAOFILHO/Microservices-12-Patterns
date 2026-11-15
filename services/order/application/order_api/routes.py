@@ -77,6 +77,8 @@ def checkout():
     # Pattern 8 demo: {"simulate_decline": true} makes payment refuse the charge.
     options = request.get_json(silent=True) or request.form
     simulate = "decline" if str(options.get("simulate_decline", "")).lower() in ("1", "true", "yes") else "approve"
+    if simulate == "decline" and not chaos_enabled():
+        return make_response(jsonify({"message": "Demo switches are off (CHAOS_ENABLED is not 1)"}), 403)
     status, body = saga.run_checkout(order_model, u_id, simulate)
     return make_response(jsonify(body), status)
 

@@ -9,7 +9,7 @@ SAMPLE_STOCK = {1: 25, 2: 40, 3: 60, 4: 15, 5: 10, 6: 30} | {
 }
 
 
-def seed_stock_if_empty() -> None:
+def seed_missing_stock() -> None:
     existing = {row.product_id for row in db.session.query(StockItem.product_id)}
     for product_id, on_hand in SAMPLE_STOCK.items():
         if product_id not in existing:

@@ -65,15 +65,22 @@ def consumed_events():
     return jsonify({"results": [e.to_json() for e in rows]})
 
 
+class RestockRequest(BaseModel):
+    quantity: int = Field(gt=0, le=1000)
+
+
 @inventory_api.post("/api/inventory/<int:product_id>/restock")
 def restock(product_id: int):
     """Demo and smoke-test helper: adds units on hand. Only with CHAOS_ENABLED=1 (make run)."""
     if not chaos_enabled():
         return make_response(jsonify({"message": "Demo switches are off (CHAOS_ENABLED is not 1)"}), 403)
-    quantity = int((request.get_json(silent=True) or {}).get("quantity", 0))
+    try:
+        data = RestockRequest.model_validate(request.get_json(silent=True) or {})
+    except ValidationError as exc:
+        return make_response(jsonify({"message": "Invalid request", "errors": exc.errors(include_url=False)}), 400)
     item = db.session.get(StockItem, product_id)
-    if item is None or not 0 < quantity <= 1000:
-        return make_response(jsonify({"message": "Unknown product or quantity not in 1-1000"}), 400)
-    item.on_hand += quantity
+    if item is None:
+        return make_response(jsonify({"message": f"No stock record for product {product_id}"}), 404)
+    item.on_hand += data.quantity
     db.session.commit()
     return jsonify({"result": item.to_json()})

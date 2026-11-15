@@ -12,6 +12,7 @@ demo) is restarted after RESTART_DELAY_SECONDS, so the registry shows it leave a
 import os
 import shutil
 import signal
+import socket
 import subprocess
 import sys
 import time
@@ -76,8 +77,6 @@ def start_redis() -> bool:
     print(f"  redis starting on :{REDIS_PORT} (pid {proc.pid})…")
     for _ in range(20):
         try:
-            import socket
-
             with socket.create_connection(("127.0.0.1", REDIS_PORT), timeout=0.5):
                 redis_running = True
                 return True

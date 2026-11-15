@@ -8,6 +8,8 @@ from fastapi import APIRouter, Request
 from fastapi.responses import JSONResponse
 from pydantic import BaseModel
 
+from shop_common.runtime import runtime_info
+
 from .. import config
 from ..observability import upstream_headers
 
@@ -136,20 +138,22 @@ async def events(request: Request):
             return None
 
     async with _client() as client:
-        order_bases = config.urls_for("order")
-        outbox, consumed, stock, reservations, *buses = await asyncio.gather(
-            get("order", "/api/order/outbox"),
+        # Every order replica reports its own bus switch; they share one outbox table, so any
+        # replica's answer is the outbox.
+        consumed, stock, reservations, *outboxes = await asyncio.gather(
             get("inventory", "/api/inventory/events"),
             get("inventory", "/api/inventory"),
             get("inventory", "/api/inventory/reservations"),
-            *(get("order", "/api/order/outbox", base=b) for b in order_bases),
+            *(get("order", "/api/order/outbox", base=b) for b in config.urls_for("order")),
         )
+    buses = [o for o in outboxes if o]
+    outbox = buses[0] if buses else None
     return {
         "outbox": outbox,
         "consumed": consumed["results"] if consumed else None,
         "stock": stock["results"] if stock else None,
         "reservations": reservations["results"] if reservations else None,
-        "bus_connected": [b["bus_connected"] for b in buses if b] or None,
+        "bus_connected": [b["bus_connected"] for b in buses] or None,
         "chaos_enabled": config.CHAOS_ENABLED,
     }
 
@@ -177,8 +181,6 @@ async def set_bus(body: BusSwitch):
 @router.get("/runtime")
 async def runtime(request: Request):
     """How every process runs: as root or not, in a container or not, which build (git SHA)."""
-    from shop_common.runtime import runtime_info
-
     async def one(service: str, base: str) -> dict:
         try:
             response = await client.get(f"{base}/debug/runtime", headers=upstream_headers(request))

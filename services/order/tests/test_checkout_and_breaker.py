@@ -86,3 +86,19 @@ def test_catalog_down_means_no_charge(client, monkeypatch):
     monkeypatch.setattr(clients, "product_prices", down)
     _cart(client)
     assert client.post("/api/order/checkout", headers=AUTH).status_code == 503
+
+
+def test_a_payment_timeout_never_claims_nothing_was_charged(client):
+    """Payment at :9 refuses the call, which looks like a timeout: the charge state is unknown."""
+    _cart(client)
+    message = client.post("/api/order/checkout", headers=AUTH).get_json()["message"]
+    assert "could not be confirmed" in message
+    assert "nothing was charged" not in message
+
+
+def test_an_open_breaker_does_say_nothing_was_charged(client):
+    _cart(client)
+    for _ in range(clients.FAIL_MAX):
+        client.get("/api/order/payment-check")
+    message = client.post("/api/order/checkout", headers=AUTH).get_json()["message"]
+    assert "nothing was charged" in message
