@@ -19,19 +19,24 @@ jobs:
       frontend: ${{ steps.plan.outputs.frontend }}
       bicep: ${{ steps.plan.outputs.bicep }}
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
         with:
           fetch-depth: 0
 
-      - uses: actions/setup-python@v5
+      - uses: actions/setup-python@a26af69be951a213d495a4c3e4e4022e16d87065 # v5
         with:
           python-version: "3.12"
 
       - name: Plan the jobs
         id: plan
+        env:
+          # Through env, never pasted into the script: a branch name is user-controlled text.
+          EVENT: ${{ github.event_name }}
+          BASE_REF: ${{ github.base_ref }}
         run: |
-          if [ "${{ github.event_name }}" = "pull_request" ]; then
-            git diff --name-only "origin/${{ github.base_ref }}...HEAD" | tee changed.txt | python scripts/ci_changes.py
+          set -euo pipefail
+          if [ "$EVENT" = "pull_request" ]; then
+            git diff --name-only "origin/$BASE_REF...HEAD" | tee changed.txt | python scripts/ci_changes.py
           else
             python scripts/ci_changes.py --all
           fi
@@ -50,9 +55,9 @@ jobs:
       matrix:
         include: ${{ fromJSON(needs.changes.outputs.suites) }}
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
 
-      - uses: actions/setup-python@v5
+      - uses: actions/setup-python@a26af69be951a213d495a4c3e4e4022e16d87065 # v5
         with:
           python-version: "3.12"
           cache: "pip"
@@ -87,9 +92,9 @@ jobs:
       run:
         working-directory: frontend
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
 
-      - uses: actions/setup-node@v4
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4
         with:
           node-version: "20"
           cache: "npm"
@@ -113,7 +118,7 @@ jobs:
       matrix:
         include: ${{ fromJSON(needs.changes.outputs.images) }}
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
 
       - name: Stage shared package (shop_common)
         if: matrix.shared
@@ -146,8 +151,26 @@ jobs:
     if: needs.changes.outputs.bicep == 'true'
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
 
       # Compiles the templates only; nothing is deployed and no login is needed.
       - name: Build main.bicep
         run: az bicep build --file infra/bicep/main.bicep --stdout > /dev/null
+
+  ci-ok:
+    # The one check to require before merging. Matrix jobs that a change skips report under names
+    # that never resolve, so requiring them would block forever; this job always runs and fails
+    # only if a job that did run failed or was cancelled.
+    name: CI ok
+    if: always()
+    needs: [changes, unit-tests, frontend, containers, bicep]
+    runs-on: ubuntu-latest
+    steps:
+      - name: Every job that ran passed
+        env:
+          RESULTS: ${{ join(needs.*.result, ' ') }}
+        run: |
+          echo "Job results: $RESULTS"
+          for result in $RESULTS; do
+            case "$result" in success|skipped) ;; *) exit 1 ;; esac
+          done

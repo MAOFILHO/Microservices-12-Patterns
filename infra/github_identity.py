@@ -22,13 +22,18 @@ import json
 import re
 import subprocess
 import sys
+from pathlib import Path
+
+sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "scripts"))
+from service_table import AZURE_RESOURCE_GROUP  # noqa: E402
 
 APP_NAME = "ms12p-github-deploy"
 CREDENTIAL_NAME = "github-main-branch"
 ISSUER = "https://token.actions.githubusercontent.com"
-RESOURCE_GROUP = "rg-microservices-12-patterns"
+RESOURCE_GROUP = AZURE_RESOURCE_GROUP
 ROLE = "Contributor"
-STEPS = ["app", "service_principal", "credential", "role"]
+STEPS = ["app", "service_principal", "credential", "role", "github_secrets"]
+GITHUB_SECRETS = ["AZURE_CLIENT_ID", "AZURE_TENANT_ID", "AZURE_SUBSCRIPTION_ID"]
 
 
 def federated_credential(repo: str) -> dict:
@@ -46,8 +51,24 @@ def role_scope(subscription_id: str, resource_group: str) -> str:
 
 
 def missing_steps(found: dict) -> list[str]:
-    """What still needs creating. The role needs the resource group, which only exists while provisioned."""
-    return [step for step in STEPS if not found[step] and (step != "role" or found["resource_group"])]
+    """What still needs creating. The role needs the resource group, which only exists while
+    provisioned. A newly created app has a new client id, so the GitHub secrets are rewritten."""
+    todo = [step for step in STEPS if not found[step] and (step != "role" or found["resource_group"])]
+    if "app" in todo and "github_secrets" not in todo:
+        todo.append("github_secrets")
+    return todo
+
+
+def role_assignment_args(sp_object_id: str, scope: str) -> list[str]:
+    """By object id: right after creating a service principal, Entra has often not replicated it,
+    and an assignment by app id fails with "cannot find principal"."""
+    return ["role", "assignment", "create", "--assignee-object-id", sp_object_id,
+            "--assignee-principal-type", "ServicePrincipal", "--role", ROLE, "--scope", scope]
+
+
+def pick_app(apps: list[dict]) -> str | None:
+    """`az ad app list --display-name` matches by prefix: keep only the exact name."""
+    return next((app["appId"] for app in apps if app["displayName"] == APP_NAME), None)
 
 
 def repo_from_remote(url: str) -> str:
@@ -66,18 +87,23 @@ def _az_json(args: list[str]):
 
 
 def app_id() -> str | None:
-    apps = _az_json(["ad", "app", "list", "--display-name", APP_NAME])
-    return apps[0]["appId"] if apps else None
+    return pick_app(_az_json(["ad", "app", "list", "--display-name", APP_NAME]) or [])
+
+
+def sp_object_id(client_id: str) -> str | None:
+    principals = _az_json(["ad", "sp", "list", "--filter", f"appId eq '{client_id}'"]) or []
+    return principals[0]["id"] if principals else None
 
 
 def grant_role_if_identity_exists(subscription_id: str, resource_group: str) -> None:
     """Called by make provision right after it creates the resource group."""
     client_id = app_id()
-    if client_id is None:
+    object_id = sp_object_id(client_id) if client_id else None
+    if object_id is None:
         return
     scope = role_scope(subscription_id, resource_group)
-    if not _az_json(["role", "assignment", "list", "--assignee", client_id, "--role", ROLE, "--scope", scope]):
-        _run(["az", "role", "assignment", "create", "--assignee", client_id, "--role", ROLE, "--scope", scope])
+    if not _az_json(["role", "assignment", "list", "--assignee", object_id, "--role", ROLE, "--scope", scope]):
+        _run(["az", *role_assignment_args(object_id, scope)])
         print(f"Deploy identity {APP_NAME}: {ROLE} granted on {resource_group}.")
 
 
@@ -88,38 +114,41 @@ def main() -> int:
     scope = role_scope(subscription_id, RESOURCE_GROUP)
 
     client_id = app_id()
+    object_id = sp_object_id(client_id) if client_id else None
+    secret_names = {item["name"] for item in json.loads(_run(["gh", "secret", "list", "--repo", repo, "--json", "name"]) or "[]")}
     found = {
         "app": client_id is not None,
-        "service_principal": bool(client_id and _az_json(["ad", "sp", "list", "--filter", f"appId eq '{client_id}'"])),
+        "service_principal": object_id is not None,
         "credential": bool(client_id and any(c["name"] == CREDENTIAL_NAME for c in
                                              _az_json(["ad", "app", "federated-credential", "list", "--id", client_id]))),
         "resource_group": _run(["az", "group", "exists", "--name", RESOURCE_GROUP]) == "true",
         "role": False,
+        "github_secrets": set(GITHUB_SECRETS) <= secret_names,
     }
-    if client_id and found["resource_group"]:
-        found["role"] = bool(_az_json(["role", "assignment", "list", "--assignee", client_id, "--role", ROLE, "--scope", scope]))
+    if object_id and found["resource_group"]:
+        found["role"] = bool(_az_json(["role", "assignment", "list", "--assignee", object_id, "--role", ROLE, "--scope", scope]))
 
     todo = missing_steps(found)
     print(f"Repo {repo}, identity {APP_NAME}. To create: {', '.join(todo) or 'nothing, already set up'}.")
     if "app" in todo:
         client_id = _az_json(["ad", "app", "create", "--display-name", APP_NAME])["appId"]
     if "service_principal" in todo:
-        _run(["az", "ad", "sp", "create", "--id", client_id])
+        object_id = _az_json(["ad", "sp", "create", "--id", client_id])["id"]
     if "credential" in todo:
         _run(["az", "ad", "app", "federated-credential", "create", "--id", client_id,
               "--parameters", json.dumps(federated_credential(repo))])
     if "role" in todo:
-        _run(["az", "role", "assignment", "create", "--assignee", client_id, "--role", ROLE, "--scope", scope])
+        _run(["az", *role_assignment_args(object_id, scope)])
     if not found["resource_group"]:
         print(f"{RESOURCE_GROUP} does not exist yet: make provision grants the role when it creates it.")
-
-    # The workflow needs these ids to ask Azure for a short-lived token. Stored as secrets so they
-    # are masked in public logs; passed on stdin so they never show in the process list.
-    for name, value in [("AZURE_CLIENT_ID", client_id), ("AZURE_TENANT_ID", tenant_id),
-                        ("AZURE_SUBSCRIPTION_ID", subscription_id)]:
-        subprocess.run(["gh", "secret", "set", name, "--repo", repo], input=value, text=True, check=True,
-                       capture_output=True)
-    print("GitHub secrets AZURE_CLIENT_ID, AZURE_TENANT_ID, AZURE_SUBSCRIPTION_ID are set. Done.")
+    if "github_secrets" in todo:
+        # Not passwords, but masked in this public repo's logs, and passed on stdin so they never
+        # show in the process list.
+        for name, value in zip(GITHUB_SECRETS, [client_id, tenant_id, subscription_id]):
+            subprocess.run(["gh", "secret", "set", name, "--repo", repo], input=value, text=True, check=True,
+                           capture_output=True)
+        print(f"GitHub secrets {', '.join(GITHUB_SECRETS)} are set.")
+    print("Done.")
     return 0
 
 

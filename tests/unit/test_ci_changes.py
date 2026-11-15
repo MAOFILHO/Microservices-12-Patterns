@@ -54,3 +54,14 @@ def test_matrix_entries_carry_what_the_jobs_need():
     image = next(i for i in p["images"] if i["image"] == "registry")
     assert image == {"image": "registry", "dir": "registry", "port": 8500, "shared": False}
     assert next(i for i in p["images"] if i["image"] == "gateway")["shared"] is True
+
+
+def test_pytest_settings_run_every_suite():
+    assert len(plan(["pytest.ini"])["suites"]) == 8
+
+
+def test_a_contract_file_for_an_unknown_provider_fails_loudly():
+    import pytest
+
+    with pytest.raises(ValueError, match="no provider"):
+        plan(["contracts/pacts/order-shipping.json"])

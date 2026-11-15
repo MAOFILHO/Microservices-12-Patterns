@@ -72,3 +72,12 @@ def test_user_reads_its_signing_key_from_a_secret(template):
     user = _app(template, "user")
     assert "JWT_PRIVATE_KEY_B64" in json.dumps(user["envVars"]["value"])
     assert "secretRef" in json.dumps(user["envVars"]["value"])
+
+
+def test_every_service_app_gets_its_image_size(template):
+    for name in ["user", "catalog", "order", "payment", "inventory", "gateway"]:
+        assert "IMAGE_SIZE_MB" in _env_names(template, name), name
+
+
+def test_redis_does_not_receive_the_mysql_password(template):
+    assert "mysqlAdminPassword" not in _app(template, "redis")

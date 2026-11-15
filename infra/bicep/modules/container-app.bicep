@@ -23,9 +23,9 @@ param exposedPort int = 0
 @description('Extra secrets for this app only, e.g. the user service signing key: [{ name, value }].')
 @secure()
 param extraSecrets object = {}
-@description('Secret value for the AZURE_MYSQL_ADMIN_PASSWORD env var, referenced via secretRef so it never appears in plain env vars or deployment output.')
+@description('Secret value for the AZURE_MYSQL_ADMIN_PASSWORD env var, referenced via secretRef so it never appears in plain env vars or deployment output. Empty for apps without a database (Redis), which then get no MySQL secret at all.')
 @secure()
-param mysqlAdminPassword string
+param mysqlAdminPassword string = ''
 @description('Grants a system-assigned managed identity. Off for every app today; kept for later milestones.')
 param enableSystemIdentity bool = false
 
@@ -56,6 +56,7 @@ resource containerApp 'Microsoft.App/containerApps@2024-03-01' = {
           name: 'acr-password'
           value: acrPassword
         }
+      ], empty(mysqlAdminPassword) ? [] : [
         {
           name: 'mysql-password'
           value: mysqlAdminPassword

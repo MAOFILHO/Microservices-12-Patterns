@@ -145,7 +145,9 @@ collector. Without it, traces stay in each process's memory and the Observabilit
 Azure Container Apps (one app per service plus the gateway, all scale-to-zero; Redis as an
 always-on internal bus) + MySQL Flexible Server. About $0.21 for an 8-hour session; see
 [cost_estimate.md](cost_estimate.md). In Azure, discovery uses Container Apps DNS (no registry), and
-the demo switches stay off. Nothing has been deployed yet: the first Azure run is issue #11.
+the demo switches stay off. Redis is reachable only from apps inside the environment and has no
+password, which is fine for a demo where every app is ours. Nothing has been deployed yet: the first
+Azure run is issue #11.
 
 ```bash
 make github-identity   # once: the Azure identity the Deploy workflow uses (OIDC, no secret)

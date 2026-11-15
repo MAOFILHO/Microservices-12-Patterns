@@ -19,9 +19,6 @@ concurrency:
   group: deploy
   cancel-in-progress: false
 
-env:
-  RESOURCE_GROUP: rg-microservices-12-patterns
-
 jobs:
   deploy:
     name: Deploy changed services to Azure
@@ -47,17 +44,21 @@ jobs:
         id: running
         run: |
           set -euo pipefail
+          # Services, folders and resource group all come from scripts/service_table.py.
+          RESOURCE_GROUP=$(python scripts/deploy_plan.py --resource-group)
+          echo "RESOURCE_GROUP=$RESOURCE_GROUP" >> "$GITHUB_ENV"
+          python scripts/deploy_plan.py --services > services.txt
           acr=$(az acr list -g "$RESOURCE_GROUP" --query "[0].name" -o tsv)
           if [ -z "$acr" ]; then echo "Nothing provisioned in $RESOURCE_GROUP. Run make provision first."; exit 1; fi
           echo "acr=$acr" >> "$GITHUB_OUTPUT"
           running="{}"
-          for app in user catalog order payment inventory gateway; do
+          while read -r app _dir; do
             image=$(az containerapp show -n "$app" -g "$RESOURCE_GROUP" --query "properties.template.containers[0].image" -o tsv)
             tag="${image##*:}"
             # 'latest' or anything that is not a commit: unknown, so deploy_plan rebuilds it.
             if [[ "$tag" =~ ^[0-9a-f]{7,40}$ ]]; then value="\"$tag\""; else value=null; fi
             running=$(jq -c --arg app "$app" --argjson commit "$value" '.[$app] = $commit' <<< "$running")
-          done
+          done < services.txt
           echo "$running" > running.json
           cat running.json
 
@@ -79,18 +80,31 @@ jobs:
           SERVICES: ${{ steps.plan.outputs.services }}
         run: |
           set -euo pipefail
-          echo "| Service | Commit | Image size |" >> "$GITHUB_STEP_SUMMARY"
-          echo "|---|---|---|" >> "$GITHUB_STEP_SUMMARY"
+          echo "| Service | Commit | Image size | Health |" >> "$GITHUB_STEP_SUMMARY"
+          echo "|---|---|---|---|" >> "$GITHUB_STEP_SUMMARY"
           for svc in $SERVICES; do
-            dir="services/$svc"; [ "$svc" = "gateway" ] && dir="gateway"
+            dir=$(awk -v s="$svc" '$1 == s {print $2}' services.txt)
             cp -r shared "$dir/_shared"
             az acr build --registry "$ACR" --resource-group "$RESOURCE_GROUP" \
               --image "$svc:$HEAD_SHA" --build-arg "GIT_SHA=$HEAD_SHA" --platform linux/amd64 "$dir"
             rm -rf "$dir/_shared"
             size=$(az acr manifest show --registry "$ACR" --name "$svc:$HEAD_SHA" -o json | python scripts/deploy_plan.py --size)
             az containerapp update -n "$svc" -g "$RESOURCE_GROUP" \
-              --image "$ACR.azurecr.io/$svc:$HEAD_SHA" --set-env-vars "IMAGE_SIZE_MB=$size" -o none
-            echo "| $svc | \`$HEAD_SHA\` | $size MB |" >> "$GITHUB_STEP_SUMMARY"
+              --image "$ACR.azurecr.io/$svc:$HEAD_SHA" --set-env-vars "IMAGE_SIZE_MB=${size:-0}" -o none
+            # "Update accepted" is not "running": wait until the service itself answers with the
+            # new commit (this also wakes a scaled-to-zero app). A crash-looping revision fails the run.
+            fqdn=$(az containerapp show -n "$svc" -g "$RESOURCE_GROUP" --query properties.configuration.ingress.fqdn -o tsv)
+            running=""
+            for attempt in $(seq 1 30); do
+              running=$(curl -sf --max-time 10 "https://$fqdn/debug/runtime" | jq -r .git_sha || true)
+              [ "$running" = "$HEAD_SHA" ] && break
+              sleep 10
+            done
+            if [ "$running" != "$HEAD_SHA" ]; then
+              echo "::error::$svc did not answer with $HEAD_SHA within 5 minutes (last seen: ${running:-nothing})"
+              exit 1
+            fi
+            echo "| $svc | \`$HEAD_SHA\` | ${size:-?} MB | answering |" >> "$GITHUB_STEP_SUMMARY"
           done
 
       - name: Nothing to deploy

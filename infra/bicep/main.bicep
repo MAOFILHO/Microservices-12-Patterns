@@ -28,6 +28,9 @@ param imageTag string = 'latest'
 @secure()
 param jwtPrivateKeyB64 string
 
+@description('Compressed image size in MB per service, measured by provision.py after az acr build; shown on the Containerization page.')
+param imageSizesMb object = {}
+
 @description('Redis image, imported into this ACR by provision.py (pattern 7 event bus).')
 param redisImageTag string = '7.4-alpine'
 
@@ -110,6 +113,7 @@ module user 'modules/container-app.bicep' = {
     extraSecrets: { items: [ { name: 'jwt-private-key', value: jwtPrivateKeyB64 } ] }
     envVars: concat(commonEnv, [
       { name: 'JWT_PRIVATE_KEY_B64', secretRef: 'jwt-private-key' }
+      { name: 'IMAGE_SIZE_MB', value: string(imageSizesMb.?user ?? 0) }
     ])
   }
 }
@@ -128,7 +132,9 @@ module catalog 'modules/container-app.bicep' = {
     imageTag: imageTag
     targetPort: 5102
     minReplicas: minReplicas
-    envVars: commonEnv
+    envVars: concat(commonEnv, [
+      { name: 'IMAGE_SIZE_MB', value: string(imageSizesMb.?catalog ?? 0) }
+    ])
   }
 }
 
@@ -153,6 +159,7 @@ module order 'modules/container-app.bicep' = {
       { name: 'PAYMENT_SERVICE_BASE_URL', value: 'https://${payment.outputs.fqdn}' }
       { name: 'INVENTORY_SERVICE_BASE_URL', value: 'https://${inventory.outputs.fqdn}' }
       { name: 'REDIS_URL', value: redisUrl }
+      { name: 'IMAGE_SIZE_MB', value: string(imageSizesMb.?order ?? 0) }
     ])
   }
 }
@@ -171,7 +178,9 @@ module payment 'modules/container-app.bicep' = {
     imageTag: imageTag
     targetPort: 5104
     minReplicas: minReplicas
-    envVars: commonEnv
+    envVars: concat(commonEnv, [
+      { name: 'IMAGE_SIZE_MB', value: string(imageSizesMb.?payment ?? 0) }
+    ])
   }
 }
 
@@ -191,12 +200,15 @@ module inventory 'modules/container-app.bicep' = {
     minReplicas: minReplicas
     envVars: concat(commonEnv, [
       { name: 'REDIS_URL', value: redisUrl }
+      { name: 'IMAGE_SIZE_MB', value: string(imageSizesMb.?inventory ?? 0) }
     ])
   }
 }
 
 // One replica, always on while provisioned: the stream lives in memory, so scaling to zero would
 // drop undelivered events. Internal TCP only: nothing outside the environment can reach it.
+// No Redis password: every app in this environment can read and write the streams. Acceptable for
+// this demo, where all apps are ours; a shared environment would need AUTH or a managed Redis.
 module redis 'modules/container-app.bicep' = {
   name: 'redis'
   params: {
@@ -206,7 +218,6 @@ module redis 'modules/container-app.bicep' = {
     acrLoginServer: acr.outputs.loginServer
     acrUsername: acr.outputs.registryName
     acrPassword: acrPassword
-    mysqlAdminPassword: mysqlAdminPassword
     imageName: 'redis'
     imageTag: redisImageTag
     targetPort: 6379
@@ -240,6 +251,7 @@ module gateway 'modules/container-app.bicep' = {
       { name: 'PAYMENT_SERVICE_BASE_URL', value: 'https://${payment.outputs.fqdn}' }
       { name: 'INVENTORY_SERVICE_BASE_URL', value: 'https://${inventory.outputs.fqdn}' }
       { name: 'FRONTEND_ORIGIN', value: 'https://${staticWebApp.outputs.defaultHostname}' }
+      { name: 'IMAGE_SIZE_MB', value: string(imageSizesMb.?gateway ?? 0) }
     ]
   }
 }

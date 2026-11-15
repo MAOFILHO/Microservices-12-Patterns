@@ -37,7 +37,6 @@ STATE_FILE = REPO_ROOT / "infra" / ".state.json"
 BICEP_FILE = REPO_ROOT / "infra" / "bicep" / "main.bicep"
 ENV_FILE = REPO_ROOT / ".env"
 
-DEFAULT_RESOURCE_GROUP = "rg-microservices-12-patterns"
 FALLBACK_LOCATION = "eastus"  # only used if neither .env nor `az config` set one
 DEFAULT_NAME_PREFIX = "ms12p"
 MYSQL_ADMIN_USERNAME = "flaskadmin"
@@ -60,12 +59,12 @@ def load_dotenv_defaults() -> None:
             os.environ[key] = value
 
 sys.path.insert(0, str(REPO_ROOT / "scripts"))
-from service_table import PYTHON_SERVICES  # noqa: E402
+from service_table import AZURE_RESOURCE_GROUP as DEFAULT_RESOURCE_GROUP  # noqa: E402
+from service_table import AZURE_SERVICES as _AZURE_SERVICE_ROWS  # noqa: E402
 
 # Image name -> build context, for every image Azure runs. Image names match Container App names in
 # main.bicep. The registry is local only: in Azure, Container Apps DNS does service discovery.
-AZURE_SERVICES = {svc.name: svc.path for svc in PYTHON_SERVICES if svc.name != "registry"}
-SERVICES = AZURE_SERVICES  # teardown/state code reads this name
+AZURE_SERVICES = {svc.name: svc.path for svc in _AZURE_SERVICE_ROWS}
 
 
 REDIS_IMAGE = "redis:7.4-alpine"  # keep in step with redisImageTag in main.bicep
@@ -90,6 +89,35 @@ def generate_jwt_key_b64() -> str:
 def container_apps_for_state() -> dict[str, str]:
     """Every Container App provision creates, for pause/resume/teardown to find. Includes Redis."""
     return {name: name for name in [*AZURE_SERVICES, "redis"]}
+
+
+def choose_image_tag(skip_build: bool, head: str, previous: str | None) -> str:
+    """The tag the apps should run. --skip-build builds nothing, so it must reuse the last build:
+    pointing apps at an image that was never pushed makes every pull fail."""
+    if not skip_build:
+        return head
+    if previous is None:
+        raise SystemExit("No previous image build is recorded in infra/.state.json: run make provision without --skip-build.")
+    return previous
+
+
+def choose_jwt_key(previous: str | None) -> str:
+    """Keep the signing key across re-runs of provision, so nobody is logged out; new on a fresh stack."""
+    return previous or generate_jwt_key_b64()
+
+
+def measure_image_sizes(acr_name: str, tag: str) -> dict[str, int]:
+    """Compressed size of each image just pushed, for the Containerization page (pattern 9)."""
+    from deploy_plan import image_size_mb
+
+    sizes = {}
+    for service_name in AZURE_SERVICES:
+        manifest = json.loads(run_az(["acr", "manifest", "show", "--registry", acr_name,
+                                      "--name", f"{service_name}:{tag}"]).stdout)
+        size = image_size_mb(manifest)
+        if size is not None:
+            sizes[service_name] = size
+    return sizes
 
 
 def image_tag() -> str:
@@ -253,7 +281,7 @@ def acr_build_args(resource_group: str, acr_name: str, service_name: str, servic
 
 
 def bicep_parameters(location: str, names: dict, mysql_password: str, keep_warm: bool, tag: str,
-                     jwt_key_b64: str) -> list[str]:
+                     jwt_key_b64: str, image_sizes: dict[str, int] | None = None) -> list[str]:
     # Static Web Apps is only available in a handful of regions (Central US, East US 2, West US 2,
     # West Europe, East Asia) — NOT every region that supports Container Apps/MySQL/etc (plain
     # "East US" doesn't support it, a real failure found the first time this ran). Kept
@@ -272,6 +300,7 @@ def bicep_parameters(location: str, names: dict, mysql_password: str, keep_warm:
         f"keepWarm={'true' if keep_warm else 'false'}",
         f"imageTag={tag}",
         f"jwtPrivateKeyB64={jwt_key_b64}",
+        f"imageSizesMb={json.dumps(image_sizes or {})}",
     ]
 
 
@@ -400,10 +429,14 @@ def main() -> int:
     for key, value in names.items():
         print(f"  {key}: {value}")
 
+    previous = json.loads(STATE_FILE.read_text()) if STATE_FILE.exists() else {}
+    if previous.get("resource_group") != args.resource_group:
+        previous = {}
     mysql_password = generate_mysql_password()
-    jwt_key_b64 = generate_jwt_key_b64()
-    tag = image_tag()
-    print(f"  image tag: {tag} (the commit being deployed)")
+    jwt_key_b64 = choose_jwt_key(previous.get("jwt_key_b64"))
+    tag = choose_image_tag(args.skip_build, image_tag(), previous.get("image_tag"))
+    image_sizes = previous.get("image_sizes", {}) if args.skip_build else {}
+    print(f"  image tag: {tag} ({'reused from the last build' if args.skip_build else 'the commit being deployed'})")
 
     if not args.skip_build:
         run_az([
@@ -425,9 +458,10 @@ def main() -> int:
         print("\n=== az acr import: redis (event bus, pattern 7) ===")
         run_az(redis_import_args(args.resource_group, names["acr_name"]), capture=False)
         build_images(args.resource_group, names["acr_name"], tag)
+        image_sizes = measure_image_sizes(names["acr_name"], tag)
 
     try:
-        parameters = bicep_parameters(location, names, mysql_password, args.keep_warm, tag, jwt_key_b64)
+        parameters = bicep_parameters(location, names, mysql_password, args.keep_warm, tag, jwt_key_b64, image_sizes)
         outputs = deploy_bicep(args.resource_group, parameters)
     except subprocess.CalledProcessError as exc:
         # Never let the real password leak into a traceback or log — redact
@@ -457,6 +491,11 @@ def main() -> int:
         "mysql_admin_username": MYSQL_ADMIN_USERNAME,
         "mysql_admin_password": mysql_password,
         "acr_password": acr_password,
+        # Reused by the next provision (--skip-build, retries) so apps keep their images and
+        # nobody is logged out. Gitignored, like the passwords above.
+        "image_tag": tag,
+        "image_sizes": image_sizes,
+        "jwt_key_b64": jwt_key_b64,
         "container_apps": container_apps_for_state(),
     }
     STATE_FILE.parent.mkdir(parents=True, exist_ok=True)

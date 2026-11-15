@@ -36,3 +36,14 @@ def test_unknown_or_unparseable_running_versions_are_rebuilt():
 def test_image_size_is_the_sum_of_its_layers():
     manifest = {"config": {"size": 1_000_000}, "layers": [{"size": 30_000_000}, {"size": 20_428_800}]}
     assert image_size_mb(manifest) == 49
+
+
+def test_a_ci_only_change_rebuilds_nothing():
+    running = {name: "old" for name in ALL}
+    changed = _changes({"old": [".github/workflows/ci.yml", "scripts/ci_changes.py", "pytest.ini"]})
+    assert services_to_deploy(running, "new", changed) == []
+
+
+def test_a_multi_platform_index_reports_unknown_size_instead_of_crashing():
+    index = {"mediaType": "application/vnd.oci.image.index.v1+json", "manifests": [{"size": 1}]}
+    assert image_size_mb(index) is None

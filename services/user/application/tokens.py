@@ -1,7 +1,9 @@
 """Signs login tokens (pattern 10). Only the user service holds the private key.
 
-Key source, in order: JWT_PRIVATE_KEY_B64 (base64 PEM, the Azure Container Apps secret set by
-provision), JWT_PRIVATE_KEY_PEM, else instance/jwt_private.pem, created on first start. Keeping the key in a file means restarting the service does not log anyone out.
+Key source, in order:
+  1. JWT_PRIVATE_KEY_B64: base64 PEM, the Azure Container Apps secret that provision sets;
+  2. JWT_PRIVATE_KEY_PEM;
+  3. instance/jwt_private.pem, created on first start. Keeping the key in a file means restarting the service does not log anyone out.
 """
 import base64
 import os

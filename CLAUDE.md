@@ -32,7 +32,8 @@ history, monolith dropped). The full agreed plan is in [`docs/PLAN.md`](docs/PLA
   (FastAPI), `registry/` (FastAPI), `shared/` (`shop_common`), `contracts/`, `frontend/`, `infra/`,
   `scripts/`, `tests/`.
 - **One service table**: `scripts/service_table.py` lists every local process, folder and port, plus
-  `REPLICA_PORTS` (order also on 5113) and `CONTRACT_SUITES`. `setup.py`, `run_local.py`,
+  `REPLICA_PORTS` (order also on 5113), `CONTRACT_SUITES`, each service's `azure`/`shared` flags,
+  `AZURE_SERVICES` and `AZURE_RESOURCE_GROUP`. CI matrices, provision and the Deploy workflow read it. `setup.py`, `run_local.py`,
   `provision.py` and the smoke tests all read it. Add a service there.
 - Ports: user 5101, catalog 5102, order 5103 + 5113, payment 5104, inventory 5105, gateway 8100,
   registry 8500, Redis 6390, frontend 5273.
@@ -53,8 +54,11 @@ history, monolith dropped). The full agreed plan is in [`docs/PLAN.md`](docs/PLA
   images, frontend, bicep) from the service table. `.github/workflows/deploy.yml` is manual, main
   only, OIDC via `infra/github_identity.py` (`make github-identity`, run by the owner; ids stored as
   GitHub secrets so they stay masked in public logs); `scripts/deploy_plan.py` picks services whose
-  code changed since their running commit. Actions in deploy.yml are pinned to commit SHAs.
-- Azure (M3b): provision tags images with the 12-char commit, imports `redis:7.4-alpine` into ACR,
+  code changed since their running commit (CI-only files rebuild nothing) and waits until each service
+answers `/debug/runtime` with the new commit. All workflow actions are pinned to commit SHAs. "CI ok"
+is the one job to require in branch protection.
+- Azure (M3b): provision keeps `image_tag`, `image_sizes` and `jwt_key_b64` in infra/.state.json so
+  `--skip-build` and re-runs neither break image pulls nor log users out. It tags images with the 12-char commit, imports `redis:7.4-alpine` into ACR,
   generates the JWT key (`openssl`, passed base64 as a secure param, user reads `JWT_PRIVATE_KEY_B64`),
   and re-grants the deploy identity's role on the new resource group. Redis is an internal TCP app
   (`redis://redis:6379/0`), 1 replica; `make resume` keeps it at exactly 1. Registry is not deployed.
