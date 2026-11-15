@@ -1,20 +1,20 @@
 import { useState } from "react";
 import { Link } from "react-router-dom";
-import { OrderSummary, ServiceCall, patternsApi, savedApiKey } from "../../api/gatewayClient";
+import { OrderSummary, ServiceCall, patternsApi, savedToken } from "../../api/gatewayClient";
 
 export default function ApiGatewayDemo() {
   const [summary, setSummary] = useState<OrderSummary | null>(null);
   const [calls, setCalls] = useState<ServiceCall[]>([]);
   const [error, setError] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
-  const apiKey = savedApiKey();
+  const token = savedToken();
 
   async function run() {
-    if (!apiKey) return;
+    if (!token) return;
     setBusy(true);
     setError(null);
     try {
-      const { body } = await patternsApi.orderSummary(apiKey);
+      const { body } = await patternsApi.orderSummary(token);
       setSummary(body);
       setCalls(body.calls);
     } catch (err) {
@@ -27,7 +27,7 @@ export default function ApiGatewayDemo() {
     }
   }
 
-  if (!apiKey) {
+  if (!token) {
     return (
       <p>
         This demo builds your order summary, so it needs a signed-in user. <Link to="/shop">Register or log in on the

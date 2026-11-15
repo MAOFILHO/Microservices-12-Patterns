@@ -63,3 +63,59 @@ def test_order_summary_requires_login(monkeypatch):
     r = client.get("/api/order-summary")
     assert r.status_code == 401
     assert {c["service"] for c in r.json()["calls"]} == {"user", "order"}
+
+
+def test_order_paths_need_a_valid_token_at_the_edge(monkeypatch):
+    from app import config
+
+    called = []
+    monkeypatch.setitem(config.SERVICE_BASE_URLS, "order", "http://127.0.0.1:9")
+    monkeypatch.setattr("app.routers.shop.httpx.AsyncClient.request", lambda *a, **k: called.append(1))
+    r = client.get("/api/shop/order", headers={"Authorization": "Bearer not-a-real-token"})
+    assert r.status_code == 401
+    assert "gateway" in r.json()["message"]
+    assert called == []  # the order service was never called
+
+
+def test_registry_view_falls_back_to_the_static_map():
+    body = client.get("/api/patterns/registry").json()
+    assert body["mode"] == "static"
+    assert set(body["services"]) == {"user", "catalog", "order", "payment", "inventory"}
+
+
+def test_chaos_switches_are_off_by_default():
+    assert client.post("/api/patterns/replicas/order-5103/stop").status_code == 403
+    assert client.post("/api/patterns/breaker/payment-mode", json={"mode": "failing"}).status_code == 403
+
+
+def test_url_for_round_robins_across_registered_replicas(monkeypatch):
+    from app import config
+    from shop_common.discovery import DISCOVERY
+
+    monkeypatch.setattr(DISCOVERY, "_snapshot", {"order": [{"url": "http://a"}, {"url": "http://b"}]})
+    assert {config.url_for("order") for _ in range(4)} == {"http://a", "http://b"}
+    assert config.urls_for("order") == ["http://a", "http://b"]
+    assert config.url_for("user") == config.SERVICE_BASE_URLS["user"]
+
+
+def test_proxy_fails_over_when_a_replica_refuses_the_connection(monkeypatch):
+    import httpx
+
+    from app import config
+    from shop_common.discovery import DISCOVERY
+
+    monkeypatch.setattr(DISCOVERY, "_snapshot", {"catalog": [{"url": "http://dead"}, {"url": "http://alive"}]})
+    tried = []
+
+    async def fake_request(self, method, url, **kwargs):
+        tried.append(url)
+        if url.startswith("http://dead"):
+            raise httpx.ConnectError("refused")
+        return httpx.Response(200, json={"results": []}, headers={"X-Instance-Id": "catalog-alive"})
+
+    monkeypatch.setattr(httpx.AsyncClient, "request", fake_request)
+    for _ in range(2):  # whichever replica round-robin picks first, the call succeeds
+        r = client.get("/api/shop/products")
+        assert r.status_code == 200
+        assert r.headers["X-Instance-Id"] == "catalog-alive"
+    assert "http://dead/api/products" in tried

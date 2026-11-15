@@ -1,9 +1,8 @@
 """order-service — owns orders/order items and its own database.
 
-This service has no access to the user table at all.
-To validate a caller's identity it makes a real HTTP call to user-service
-(see order_api/api/UserClient.py) — this is the Anti-Corruption-Layer-style
-boundary between the Order and User bounded contexts (pattern 2).
+This service has no access to the user table at all. It learns who the caller is from the
+signed login token (pattern 10), prices orders by asking the catalog, and charges through the
+payment service behind a circuit breaker (pattern 4). See order_api/api/clients.py.
 """
 import os
 

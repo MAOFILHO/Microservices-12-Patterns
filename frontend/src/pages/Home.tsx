@@ -18,7 +18,7 @@ export default function Home() {
         </Link>
         <Link to="/patterns" className="card" style={{ textDecoration: "none", color: "inherit" }}>
           <h3>Patterns</h3>
-          <p className="muted">The 12 patterns. Database per Service, Bounded Context, API Gateway and Observability are live now.</p>
+          <p className="muted">The 12 patterns. 8 are live now, from Database per Service to Service Discovery; the last 4 arrive in M3.</p>
         </Link>
       </div>
 

@@ -9,7 +9,7 @@ export default function Patterns() {
         <h1>The 12 patterns</h1>
         <p className="muted">
           Each pattern has a page that explains it, says when not to use it, and runs a live demo against the real
-          services. {liveCount} of 12 are live; the rest arrive in milestones M2 and M3.
+          services. {liveCount} of 12 are live; the rest arrive in milestone M3.
         </p>
       </section>
       <div className="grid cols-3">

@@ -36,8 +36,18 @@ FLASK_SERVICES = [
     Service("inventory", REPO_ROOT / "services" / "inventory", 5105, "INVENTORY_SERVICE_PORT", "flask"),
 ]
 GATEWAY = Service("gateway", REPO_ROOT / "gateway", 8100, "GATEWAY_PORT", "fastapi")
+REGISTRY = Service("registry", REPO_ROOT / "registry", 8500, "REGISTRY_PORT", "fastapi")
 
-PYTHON_SERVICES = FLASK_SERVICES + [GATEWAY]
+PYTHON_SERVICES = FLASK_SERVICES + [GATEWAY, REGISTRY]
+
+# Extra local replicas (pattern 10): service name -> extra ports. Each runs as its own process
+# from the same folder, and registers with the registry under its own instance id.
+REPLICA_PORTS: dict[str, list[int]] = {"order": [5113]}
+
+# Suites whose tests need pact-python (pattern 11): order is the consumer, payment and catalog
+# verify they still honour its contracts.
+CONTRACT_SUITES = {"order", "payment", "catalog"}
+CONTRACTS_DIR = REPO_ROOT / "contracts"
 
 # shop_common (shared/), installed into every Python venv by setup.py.
 SHARED_DIR = REPO_ROOT / "shared"

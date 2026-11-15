@@ -1,0 +1,143 @@
+{
+  "consumer": {
+    "name": "order"
+  },
+  "interactions": [
+    {
+      "description": "a charge for an order",
+      "pending": false,
+      "providerStates": [
+        {
+          "name": "payment is healthy"
+        }
+      ],
+      "request": {
+        "body": {
+          "content": {
+            "amount_cents": 2598,
+            "order_id": 42
+          },
+          "contentType": "application/json",
+          "encoded": false
+        },
+        "headers": {
+          "Content-Type": [
+            "application/json"
+          ]
+        },
+        "matchingRules": {
+          "body": {
+            "$.amount_cents": {
+              "combine": "AND",
+              "matchers": [
+                {
+                  "match": "integer"
+                }
+              ]
+            },
+            "$.order_id": {
+              "combine": "AND",
+              "matchers": [
+                {
+                  "match": "integer"
+                }
+              ]
+            }
+          }
+        },
+        "method": "POST",
+        "path": "/api/payment/charge"
+      },
+      "response": {
+        "body": {
+          "content": {
+            "result": {
+              "amount_cents": 2598,
+              "id": 1,
+              "order_id": 42,
+              "status": "APPROVED"
+            }
+          },
+          "contentType": "application/json",
+          "encoded": false
+        },
+        "headers": {
+          "Content-Type": [
+            "application/json"
+          ]
+        },
+        "matchingRules": {
+          "body": {
+            "$.result.amount_cents": {
+              "combine": "AND",
+              "matchers": [
+                {
+                  "match": "integer"
+                }
+              ]
+            },
+            "$.result.id": {
+              "combine": "AND",
+              "matchers": [
+                {
+                  "match": "integer"
+                }
+              ]
+            },
+            "$.result.order_id": {
+              "combine": "AND",
+              "matchers": [
+                {
+                  "match": "integer"
+                }
+              ]
+            }
+          }
+        },
+        "status": 200
+      },
+      "type": "Synchronous/HTTP"
+    },
+    {
+      "description": "a health check through the circuit breaker",
+      "pending": false,
+      "providerStates": [
+        {
+          "name": "payment is healthy"
+        }
+      ],
+      "request": {
+        "method": "GET",
+        "path": "/api/payment/ping"
+      },
+      "response": {
+        "body": {
+          "content": {
+            "status": "ok"
+          },
+          "contentType": "application/json",
+          "encoded": false
+        },
+        "headers": {
+          "Content-Type": [
+            "application/json"
+          ]
+        },
+        "status": 200
+      },
+      "type": "Synchronous/HTTP"
+    }
+  ],
+  "metadata": {
+    "pactRust": {
+      "ffi": "0.5.12",
+      "models": "1.3.16"
+    },
+    "pactSpecification": {
+      "version": "4.0"
+    }
+  },
+  "provider": {
+    "name": "payment"
+  }
+}

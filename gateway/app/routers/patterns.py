@@ -18,11 +18,12 @@ from ..observability import upstream_headers
 router = APIRouter(tags=["patterns"])
 
 
-async def _call(client: httpx.AsyncClient, service: str, path: str, request: Request, calls: list[dict]) -> httpx.Response | None:
+async def _call(client: httpx.AsyncClient, service: str, path: str, request: Request, calls: list[dict],
+                base: str | None = None) -> httpx.Response | None:
     """GET one service, recording service, path, status and duration for the demo panel."""
     started = time.perf_counter()
     try:
-        response = await client.get(f"{config.SERVICE_BASE_URLS[service]}{path}", headers=upstream_headers(request))
+        response = await client.get(f"{base or config.url_for(service)}{path}", headers=upstream_headers(request))
         status = response.status_code
     except httpx.HTTPError as exc:
         response, status = None, f"unreachable ({exc.__class__.__name__})"
@@ -132,9 +133,10 @@ async def trace_waterfall(trace_id: str, request: Request):
     """Stitches one trace's spans from the gateway and every service into a single list."""
     calls: list[dict] = []
     async with _client() as client:
-        names = list(config.SERVICE_BASE_URLS)
+        # Every instance, not just one: the trace may have passed through either order replica.
+        targets = [(n, url) for n in config.SERVICE_BASE_URLS for url in config.urls_for(n)]
         responses = await asyncio.gather(
-            *(_call(client, n, f"/debug/spans?trace_id={trace_id}", request, calls) for n in names)
+            *(_call(client, n, f"/debug/spans?trace_id={trace_id}", request, calls, base=url) for n, url in targets)
         )
     spans = list(SPAN_STORE.by_trace(trace_id))
     for response in responses:
@@ -149,15 +151,19 @@ async def metrics_summary(request: Request):
     """Total requests and average latency per service, read from each service's /metrics."""
     calls: list[dict] = []
     async with _client() as client:
-        names = list(config.SERVICE_BASE_URLS)
-        responses = await asyncio.gather(*(_call(client, n, "/metrics", request, calls) for n in names))
+        targets = [(n, url) for n in config.SERVICE_BASE_URLS for url in config.urls_for(n)]
+        responses = await asyncio.gather(*(_call(client, n, "/metrics", request, calls, base=url) for n, url in targets))
+    by_service: dict[str, list[httpx.Response]] = {n: [] for n in config.SERVICE_BASE_URLS}
+    for (name, _url), response in zip(targets, responses):
+        if response is not None and response.status_code == 200:
+            by_service[name].append(response)
     summary = []
-    for name, response in zip(names, responses):
-        if response is None or response.status_code != 200:
+    for name, ok_responses in by_service.items():  # replicas are summed into one row per service
+        if not ok_responses:
             summary.append({"service": name, "reachable": False})
             continue
         requests_total, latency_sum, latency_count, errors = 0.0, 0.0, 0.0, 0.0
-        for family in text_string_to_metric_families(response.text):
+        for family in (f for r in ok_responses for f in text_string_to_metric_families(r.text)):
             for sample in family.samples:
                 if sample.name == "shop_http_requests_total":
                     requests_total += sample.value
@@ -170,6 +176,7 @@ async def metrics_summary(request: Request):
         summary.append({
             "service": name,
             "reachable": True,
+            "instances": len(ok_responses),
             "requests": int(requests_total),
             "errors_5xx": int(errors),
             "avg_ms": round(latency_sum / latency_count * 1000, 1) if latency_count else None,

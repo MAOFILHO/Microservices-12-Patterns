@@ -28,19 +28,20 @@ def _checkout_flow(user_url: str, catalog_url: str, order_url: str) -> None:
 
     r = httpx.post(f"{user_url}/user/login", data={"username": username, "password": password})
     assert r.status_code == 200, r.text
-    api_key = r.json()["api_key"]
+    login_token = r.json()["token"]  # pattern 10: a signed token, no server session
 
     r = httpx.post(f"{catalog_url}/product/create", data={"name": f"P{token}", "slug": f"p{token}", "price": "1500"})
     assert r.status_code == 200, r.text
     product_id = r.json()["product"]["id"]
 
-    headers = {"Authorization": f"Basic {api_key}"}
+    headers = {"Authorization": f"Bearer {login_token}"}
     r = httpx.post(f"{order_url}/order/add-item", data={"product_id": product_id, "qty": 2}, headers=headers)
-    assert r.status_code == 200, r.text  # order calls user internally to validate the api_key
+    assert r.status_code == 200, r.text  # order verifies the token itself, no call to user
 
     r = httpx.post(f"{order_url}/order/checkout", headers=headers)
     assert r.status_code == 200, r.text
     assert r.json()["result"]["is_open"] is False
+    assert r.json()["payment"]["amount_cents"] == 3000  # priced by catalog, charged by payment
 
 
 def test_services_full_flow_direct():
@@ -95,3 +96,65 @@ def test_one_request_is_traced_across_services():
     trace_id = r.headers["X-Trace-Id"]
     spans = httpx.get(f"{GATEWAY_URL}/api/observability/trace/{trace_id}").json()["spans"]
     assert {"gateway", "catalog", "inventory"} <= {s["service"] for s in spans}
+
+
+# --- M2 pattern demos (patterns 10, 12, 4), through the gateway ----------------------------------
+
+def _login_with_cart() -> dict:
+    tag = uuid.uuid4().hex[:8]
+    shop = f"{GATEWAY_URL}/api/shop"
+    httpx.post(f"{shop}/user/create", data={"username": f"m2{tag}", "email": f"m2{tag}@example.com", "password": "secret123"})
+    login_token = httpx.post(f"{shop}/user/login", data={"username": f"m2{tag}", "password": "secret123"}).json()["token"]
+    headers = {"Authorization": f"Bearer {login_token}"}
+    httpx.post(f"{shop}/order/add-item", data={"product_id": 1, "qty": 3}, headers=headers)
+    return headers
+
+
+def test_registry_lists_both_order_replicas():
+    _require_stack()
+    view = httpx.get(f"{GATEWAY_URL}/api/patterns/registry").json()
+    assert view["mode"] == "registry"
+    assert {i["instance_id"] for i in view["services"]["order"]} == {"order-5103", "order-5113"}
+    assert set(view["services"]) >= set(URLS)
+
+
+def test_any_replica_serves_the_same_cart():
+    _require_stack()
+    headers = _login_with_cart()
+    seen, carts = set(), set()
+    for _ in range(6):
+        r = httpx.get(f"{GATEWAY_URL}/api/shop/order", headers=headers)
+        assert r.status_code == 200, r.text
+        seen.add(r.headers["X-Instance-Id"])
+        carts.add(r.json()["result"]["items"][0]["quantity"])
+    assert seen == {"order-5103", "order-5113"}
+    assert carts == {3}
+
+
+def test_gateway_rejects_a_bad_token_at_the_edge():
+    _require_stack()
+    r = httpx.get(f"{GATEWAY_URL}/api/shop/order", headers={"Authorization": "Bearer nope"})
+    assert r.status_code == 401
+    assert "gateway" in r.json()["message"]
+
+
+def test_breaker_opens_when_payment_fails_and_closes_after_it_heals():
+    _require_stack()
+    import time
+
+    api = f"{GATEWAY_URL}/api/patterns/breaker"
+    assert httpx.post(f"{api}/payment-mode", json={"mode": "failing"}).status_code == 200
+    try:
+        for _ in range(6):  # 3 failures on each of the 2 order replicas
+            httpx.get(f"{api}/call", timeout=10)
+        states = {b["instance"]: b["state"] for b in httpx.get(f"{api}/state").json()["breakers"]}
+        assert set(states.values()) == {"open"}, states
+        r = httpx.get(f"{api}/call").json()
+        assert r["outcome"] == "short-circuited"
+        assert r["ms"] < 50
+    finally:
+        httpx.post(f"{api}/payment-mode", json={"mode": "healthy"})
+    time.sleep(16)  # past the 15 s reset window
+    outcomes = {httpx.get(f"{api}/call").json()["outcome"] for _ in range(2)}
+    assert outcomes == {"ok"}
+    assert {b["state"] for b in httpx.get(f"{api}/state").json()["breakers"]} == {"closed"}

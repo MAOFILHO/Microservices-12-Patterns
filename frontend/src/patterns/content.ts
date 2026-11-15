@@ -26,7 +26,7 @@ export const PATTERNS: PatternInfo[] = [
     inThisProject: [
       "Each of the 5 services has its own database: a SQLite file locally, a separate logical database on one MySQL server in Azure.",
       "A service reaches another service's data only through that service's API, never through SQL.",
-      "The order service validates users by calling the user service over HTTP, not by joining the user table.",
+      "The order service learns who you are from your signed token and prices orders by asking the catalog over HTTP, never by joining their tables.",
     ],
     whenNotToUse: [
       "Small teams with one deployable: the cost of no joins and no cross-service transactions outweighs the benefit.",
@@ -57,7 +57,29 @@ export const PATTERNS: PatternInfo[] = [
     source: { label: "Martin Fowler — BoundedContext", url: "https://martinfowler.com/bliki/BoundedContext.html" },
   },
   { n: 3, slug: "ci-cd-pipeline", name: "CI-CD Pipeline", what: "Builds, tests and deploys every service automatically.", milestone: "M3", live: false },
-  { n: 4, slug: "circuit-breaker", name: "Circuit Breaker", what: "Stops calls to a failing service to prevent more failures.", milestone: "M2", live: false },
+  {
+    n: 4,
+    slug: "circuit-breaker",
+    name: "Circuit Breaker",
+    what: "Stops calls to a failing service to prevent more failures.",
+    milestone: "M2",
+    live: true,
+    problem:
+      "When payment hangs, every checkout waits for it. Threads pile up in the order service until it stops answering too, and one sick service takes down the ones that call it.",
+    inThisProject: [
+      "Every order-to-payment call goes through one breaker (pybreaker). It opens after 3 failed calls in a row, fails calls at once for 15 s, then lets one trial call through.",
+      "Each call waits at most 1 s and is retried once after 0.2 s (tenacity), so a single blip does not count as a failure.",
+      "Only 5xx errors and timeouts count. A 400 is the caller's mistake, not a sick service.",
+      "Checkout while the breaker is open returns a clear 503: nothing was charged, the cart is kept, try again in N seconds.",
+      "Each order replica has its own breaker. They do not share state, which this page shows.",
+    ],
+    whenNotToUse: [
+      "Not for calls that must not be skipped, such as writing an audit record. Queue those instead (event-driven, M3).",
+      "Retries without a breaker multiply load on a struggling service. Always cap retries and pair them with a breaker.",
+      "Per-replica breakers open at different times. For many replicas, a shared state store or a service mesh does this better.",
+    ],
+    source: { label: "Martin Fowler — CircuitBreaker", url: "https://martinfowler.com/bliki/CircuitBreaker.html" },
+  },
   {
     n: 5,
     slug: "api-gateway",
@@ -104,9 +126,72 @@ export const PATTERNS: PatternInfo[] = [
   { n: 7, slug: "event-driven-architecture", name: "Event-Driven Architecture", what: "Services communicate by publishing and consuming events.", milestone: "M3", live: false },
   { n: 8, slug: "saga", name: "Saga Pattern", what: "Coordinates distributed transactions and rolls back failures safely.", milestone: "M3", live: false },
   { n: 9, slug: "containerization", name: "Containerization", what: "Packages each service with all its dependencies.", milestone: "M3", live: false },
-  { n: 10, slug: "stateless-services", name: "Stateless Services", what: "Stores session data outside the service.", milestone: "M2", live: false },
-  { n: 11, slug: "contract-testing", name: "Contract Testing", what: "Checks that APIs stay compatible across services.", milestone: "M2", live: false },
-  { n: 12, slug: "service-discovery", name: "Service Discovery", what: "Finds service instances automatically at runtime.", milestone: "M2", live: false },
+  {
+    n: 10,
+    slug: "stateless-services",
+    name: "Stateless Services",
+    what: "Stores session data outside the service.",
+    milestone: "M2",
+    live: true,
+    problem:
+      "If a service keeps your login or cart in its own memory, every request must go back to that one process. Restarting or adding a copy logs people out and empties carts.",
+    inThisProject: [
+      "Login returns a token signed by the user service (RS256 JWT, 1 hour). Nothing is written to a database or a session.",
+      "The gateway and the order service check the signature with the user service's public key, fetched once. No call to the user service per request.",
+      "The cart lives in the order database, not in the order process.",
+      "make run starts 2 order replicas. Every response says which one answered (X-Instance-Id), and either can serve you.",
+    ],
+    whenNotToUse: [
+      "A JWT cannot be cancelled before it expires. Keep lifetimes short, or keep a deny-list if you need instant logout.",
+      "Never put secrets or personal data in the token: anyone holding it can read the claims. Only the signature is protected.",
+      "Stateless does not mean no state. The state moved to a database, which now has to scale and stay available.",
+    ],
+    source: { label: "The Twelve-Factor App — VI. Processes", url: "https://12factor.net/processes" },
+  },
+  {
+    n: 11,
+    slug: "contract-testing",
+    name: "Contract Testing",
+    what: "Checks that APIs stay compatible across services.",
+    milestone: "M2",
+    live: true,
+    problem:
+      "Each service's own tests pass, yet a renamed field in payment breaks checkout in production. End-to-end tests would catch it, but they are slow and need every service running.",
+    inThisProject: [
+      "The order service is the consumer. Its tests record what it sends to payment and catalog and which fields it reads back, as Pact contracts in contracts/pacts/.",
+      "Payment and catalog are the providers. Their test suites start the real service and replay every request in the contract.",
+      "Renaming amount_cents in payment fails the payment suite, so CI is red on that pull request.",
+      "No Pact broker: the contracts are committed next to the code. pact-python 4.2.",
+    ],
+    whenNotToUse: [
+      "Not a replacement for testing business logic. A contract checks the shape of messages, not that prices are right.",
+      "Without a broker, consumer and provider must live in one repo. Across repos and teams, use a Pact broker and can-i-deploy.",
+      "For a public API with unknown consumers, use a versioned schema (OpenAPI) and compatibility checks instead.",
+    ],
+    source: { label: "Pact documentation — How Pact works", url: "https://docs.pact.io/getting_started/how_pact_works" },
+  },
+  {
+    n: 12,
+    slug: "service-discovery",
+    name: "Service Discovery",
+    what: "Finds service instances automatically at runtime.",
+    milestone: "M2",
+    live: true,
+    problem:
+      "With fixed addresses in config, adding a replica means editing every caller, and callers keep sending traffic to an instance that has crashed.",
+    inThisProject: [
+      "A small registry (port 8500) holds every live instance. Each service re-registers every 2 s, a heartbeat.",
+      "An instance silent for more than 10 s is dropped, so a crashed replica disappears without anyone telling the registry.",
+      "The gateway and the order service keep a copy of the registry, refreshed every 2 s, and spread calls across the live instances.",
+      "If the registry is not running, callers fall back to fixed URLs. In Azure, Container Apps' built-in DNS and load balancing do this job instead.",
+    ],
+    whenNotToUse: [
+      "On Kubernetes or Container Apps, use the platform's DNS-based discovery. Running your own registry duplicates it.",
+      "A registry is now a critical dependency. Callers must cache its answers and keep working when it is down, as these do.",
+      "Heartbeat timing is a trade-off: a short TTL drops crashed instances fast but may drop slow ones by mistake.",
+    ],
+    source: { label: "microservices.io — Client-side service discovery", url: "https://microservices.io/patterns/client-side-discovery.html" },
+  },
 ];
 
 export const SERVICE_NAMES = ["gateway", "user", "catalog", "order", "payment", "inventory"] as const;

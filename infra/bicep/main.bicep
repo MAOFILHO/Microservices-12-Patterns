@@ -133,8 +133,11 @@ module order 'modules/container-app.bicep' = {
     imageTag: imageTag
     targetPort: 5103
     minReplicas: minReplicas
+    // In Azure, Container Apps DNS does service discovery (pattern 12): no REGISTRY_URL here.
     envVars: concat(commonEnv, [
       { name: 'USER_SERVICE_BASE_URL', value: 'https://${user.outputs.fqdn}' }
+      { name: 'CATALOG_SERVICE_BASE_URL', value: 'https://${catalog.outputs.fqdn}' }
+      { name: 'PAYMENT_SERVICE_BASE_URL', value: 'https://${payment.outputs.fqdn}' }
     ])
   }
 }

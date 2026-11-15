@@ -1,4 +1,4 @@
-.PHONY: setup run provision pause resume teardown verify test smoke clean
+.PHONY: setup run provision pause resume teardown verify test contracts smoke clean
 
 setup:
 	python3.12 scripts/setup.py
@@ -29,6 +29,13 @@ test:
 	services/payment/.venv/bin/python -m pytest services/payment/tests -v
 	services/inventory/.venv/bin/python -m pytest services/inventory/tests -v
 	gateway/.venv/bin/python -m pytest gateway/tests -v
+	registry/.venv/bin/python -m pytest registry/tests -v
+
+# Pattern 11 only: the order service writes its contracts, then payment and catalog verify them.
+contracts:
+	services/order/.venv/bin/python -m pytest services/order/tests/test_contracts_consumer.py -v
+	services/payment/.venv/bin/python -m pytest services/payment/tests/test_contract_provider.py -v
+	services/catalog/.venv/bin/python -m pytest services/catalog/tests/test_contract_provider.py -v
 
 smoke:
 	.venv/bin/python -m pytest tests/smoke -v
