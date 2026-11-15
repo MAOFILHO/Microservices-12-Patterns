@@ -4,50 +4,32 @@ export default function Home() {
   return (
     <div className="grid" style={{ gap: "1.5rem" }}>
       <section className="card">
-        <h1>From Monolith to Microservices — live.</h1>
+        <h1>12 microservices patterns, working for real.</h1>
         <p className="muted">
-          This project runs the exact same e-commerce application two ways: as a single Flask
-          monolith (one process, one database) and as three independently deployable microservices
-          (user, product, order — each with its own database). Watch the real strangler-fig
-          migration happen, compare real before/after performance metrics, and learn the
-          architectural patterns behind it.
+          A small Contoso shop built from independent services. Each pattern has its own page that
+          explains it, says when not to use it, and lets you trigger it live.
         </p>
       </section>
 
       <div className="grid cols-3">
         <Link to="/shop" className="card" style={{ textDecoration: "none", color: "inherit" }}>
           <h3>Shop</h3>
-          <p className="muted">Try the working e-commerce demo against either backend.</p>
+          <p className="muted">Register, browse, add to cart and check out, all through the gateway.</p>
         </Link>
-        <Link to="/migrate" className="card" style={{ textDecoration: "none", color: "inherit" }}>
-          <h3>Migrate</h3>
-          <p className="muted">Trigger the live strangler-fig cutover, step by step, in real time.</p>
-        </Link>
-        <Link to="/learn" className="card" style={{ textDecoration: "none", color: "inherit" }}>
-          <h3>Learn</h3>
-          <p className="muted">Key advantages, anti-patterns, and the Strangler Fig pattern explained.</p>
+        <Link to="/patterns" className="card" style={{ textDecoration: "none", color: "inherit" }}>
+          <h3>Patterns</h3>
+          <p className="muted">The 12 patterns, each with a live demo as its milestone lands.</p>
         </Link>
       </div>
 
       <section className="card">
-        <h2>Architecture — Before</h2>
+        <h2>Architecture today</h2>
         <pre style={{ overflowX: "auto" }}>{`
-Browser → BFF → [ Monolith Flask App ]
-                    ├── auth blueprint
-                    ├── catalog blueprint
-                    ├── orders blueprint
-                    └── one shared database (Shared Persistence)
-`}</pre>
-      </section>
-
-      <section className="card">
-        <h2>Architecture — After</h2>
-        <pre style={{ overflowX: "auto" }}>{`
-Browser → BFF (proxy) ──┬──► user-service    → user_db
-                        ├──► product-service → product_db
-                        └──► order-service   → order_db
-                                │
-                                └──HTTP──► user-service (Anti-Corruption Layer)
+Browser → API gateway ──┬──► user     → user_db
+                        ├──► catalog  → catalog_db
+                        └──► order    → order_db
+                               │
+                               └──HTTP──► user (validates the caller)
 `}</pre>
       </section>
     </div>

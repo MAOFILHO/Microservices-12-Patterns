@@ -1,21 +1,11 @@
 #!/usr/bin/env python3
-"""make provision — stands up the FOUNDATION plus the monolith ("before")
-stack on Azure. Deliberately does NOT deploy the three microservices'
-Container Apps — those don't exist until a live migration creates them on
-demand (see bff/app/azure_traffic.py and bff/app/migration_engine.py). That
-is the whole point of the demo: watching real Azure resources get created
-while the migration runs, not flipping a switch on a stack that was already
-fully provisioned upfront.
+"""make provision — stands up the whole stack on Azure: user, catalog and order services
+plus the API gateway, each as its own Container App, and the React frontend.
 
 Thin orchestrator: resolves collision-safe resource names, builds every
 service image in the cloud via `az acr build` (no local Docker daemon, and
-pre-building all five images now means the live migration only has to
-create Container Apps from already-pushed images — fast and demo-safe,
-instead of a slow, network-flaky image build happening on camera), deploys
-infra/bicep/main.bicep (foundation + monolith + bff only) with the exact
-cheap SKUs approved in cost_estimate.md, grants the bff Container App's
-managed identity Contributor scoped to just this resource group (so it can
-create the microservices Container Apps itself at migration time), creates
+so it works on an M1 Mac — images are always `--platform linux/amd64`), deploys
+infra/bicep/main.bicep with the exact cheap SKUs approved in cost_estimate.md, creates
 a Cost Management budget alert BEFORE any billable resource exists, and
 persists every resolved name + deployment output to infra/.state.json so
 run.py, smoke tests, and teardown.py pick it up automatically.
@@ -29,7 +19,6 @@ import argparse
 import json
 import os
 import secrets
-import shutil
 import string
 import subprocess
 import sys
@@ -67,13 +56,11 @@ def load_dotenv_defaults() -> None:
         if key and key not in os.environ:
             os.environ[key] = value
 
-SERVICES = {
-    "monolith": REPO_ROOT / "monolith",
-    "user-service": REPO_ROOT / "microservices" / "user-service",
-    "product-service": REPO_ROOT / "microservices" / "product-service",
-    "order-service": REPO_ROOT / "microservices" / "order-service",
-    "bff": REPO_ROOT / "bff",
-}
+sys.path.insert(0, str(REPO_ROOT / "scripts"))
+from service_table import PYTHON_SERVICES  # noqa: E402
+
+# Image name -> build context. Image names match Container App names in main.bicep.
+SERVICES = {svc.name: svc.path for svc in PYTHON_SERVICES}
 
 
 def _redact_secrets(args: list[str]) -> list[str]:
@@ -103,8 +90,8 @@ def clickable_url(url: str) -> str:
     return f"\033]8;;{url}\033\\{light_blue_underline}{url}{reset}\033]8;;\033\\"
 
 
-def deploy_frontend(resource_group: str, static_web_app_name: str, bff_fqdn: str) -> None:
-    """Builds the React frontend against the just-deployed bff's real FQDN and
+def deploy_frontend(resource_group: str, static_web_app_name: str, gateway_fqdn: str) -> None:
+    """Builds the React frontend against the just-deployed gateway's real FQDN and
     uploads it into the Static Web App via the SWA CLI (`npx
     @azure/static-web-apps-cli deploy`). Without this step the Static Web App
     resource exists but has never received any content, so it permanently
@@ -112,10 +99,10 @@ def deploy_frontend(resource_group: str, static_web_app_name: str, bff_fqdn: str
     placeholder — that page never resolves on its own, no matter how long
     you wait, until something actually deploys to it."""
     frontend_dir = REPO_ROOT / "frontend"
-    print(f"\n=== Building frontend against bff https://{bff_fqdn} ===")
+    print(f"\n=== Building frontend against gateway https://{gateway_fqdn} ===")
     if not (frontend_dir / "node_modules").exists():
         subprocess.run(["npm", "install", "--silent"], cwd=frontend_dir, check=True)
-    build_env = {**os.environ, "VITE_BFF_BASE_URL": f"https://{bff_fqdn}"}
+    build_env = {**os.environ, "VITE_GATEWAY_BASE_URL": f"https://{gateway_fqdn}"}
     subprocess.run(["npm", "run", "build"], cwd=frontend_dir, env=build_env, check=True)
 
     deployment_token = subprocess.run(
@@ -205,28 +192,15 @@ def wait_for_acr_ready(resource_group: str, acr_name: str, timeout: float = 60.0
 def build_images(resource_group: str, acr_name: str) -> None:
     for service_name, service_dir in SERVICES.items():
         print(f"\n=== az acr build: {service_name} (cloud-side, no local Docker) ===")
-        # bff's /api/metrics/run endpoint shells out to scripts/benchmark.py,
-        # but that file lives at the repo root, outside bff/'s own build
-        # context — `az acr build`'s Dockerfile does `COPY . .` from
-        # `service_dir` only. Stage a copy in so it lands in the image
-        # (config.REPO_ROOT resolves to /app inside the container either
-        # way, so both the bff app and the staged script agree on paths).
-        staged_scripts_dir = None
-        if service_name == "bff":
-            staged_scripts_dir = service_dir / "scripts"
-            staged_scripts_dir.mkdir(exist_ok=True)
-            shutil.copy2(REPO_ROOT / "scripts" / "benchmark.py", staged_scripts_dir / "benchmark.py")
-        try:
-            run_az([
-                "acr", "build",
-                "--registry", acr_name,
-                "--resource-group", resource_group,
-                "--image", f"{service_name}:latest",
-                str(service_dir),
-            ], capture=False)
-        finally:
-            if staged_scripts_dir is not None:
-                shutil.rmtree(staged_scripts_dir, ignore_errors=True)
+        run_az([
+            "acr", "build",
+            "--registry", acr_name,
+            "--resource-group", resource_group,
+            "--image", f"{service_name}:latest",
+            # Explicit: Container Apps runs amd64, and the owner's Mac is arm64.
+            "--platform", "linux/amd64",
+            str(service_dir),
+        ], capture=False)
 
 
 def deploy_bicep(resource_group: str, location: str, names: dict, mysql_password: str, keep_warm: bool) -> dict:
@@ -258,30 +232,9 @@ def deploy_bicep(resource_group: str, location: str, names: dict, mysql_password
 
 
 def get_acr_password(resource_group: str, acr_name: str) -> str:
-    """The bff Container App needs the ACR admin password itself, at
-    runtime, to create the microservices' Container Apps on demand during
-    migration — it can't call `az` (no CLI in the container image), so this
-    gets persisted to the gitignored state file for the BFF to read at
-    startup, same as the MySQL password already is."""
+    """Saved to the gitignored state file for a human operator to debug with."""
     result = run_az(["acr", "credential", "show", "--name", acr_name, "--resource-group", resource_group])
     return json.loads(result.stdout)["passwords"][0]["value"]
-
-
-def grant_bff_contributor_on_resource_group(resource_group: str, subscription_id: str, bff_principal_id: str) -> None:
-    """The bff Container App creates the microservices' Container Apps itself
-    at migration time (see bff/app/azure_traffic.py) — it needs Contributor
-    to do that. Scoped to just this one resource group, not the subscription,
-    and torn down automatically when `make teardown` deletes the group."""
-    scope = f"/subscriptions/{subscription_id}/resourceGroups/{resource_group}"
-    print(f"\n=== Granting bff's managed identity Contributor on {scope} ===")
-    subprocess.run([
-        "az", "role", "assignment", "create",
-        "--assignee-object-id", bff_principal_id,
-        "--assignee-principal-type", "ServicePrincipal",
-        "--role", "Contributor",
-        "--scope", scope,
-        "--output", "json",
-    ], check=True)
 
 
 def create_budget_alert(resource_group: str, subscription_id: str, ceiling_usd: int, contact_email: str) -> None:
@@ -422,11 +375,9 @@ def main() -> int:
         return 1
     output_values = {k: v["value"] for k, v in outputs.items()}
 
-    grant_bff_contributor_on_resource_group(args.resource_group, subscription_id, output_values["bffPrincipalId"])
-
     create_budget_alert(args.resource_group, subscription_id, args.budget_ceiling, args.budget_email)
 
-    deploy_frontend(args.resource_group, names["static_web_app_name"], output_values["bffFqdn"])
+    deploy_frontend(args.resource_group, names["static_web_app_name"], output_values["gatewayFqdn"])
 
     acr_password = get_acr_password(args.resource_group, names["acr_name"])
 
@@ -436,33 +387,18 @@ def main() -> int:
         "subscription_id": subscription_id,
         "names": names,
         "outputs": output_values,
-        # NOTE: the running bff Container App does NOT read this file (it
-        # lives only on whichever machine ran `make provision`, not inside
-        # the container) — it gets these same secrets via its own env vars,
-        # injected directly by main.bicep's secretRefs. This copy is kept
-        # only for teardown.py/verify_teardown.py and for a human operator
-        # to inspect/debug with.
+        # Kept only for teardown.py/verify_teardown.py and for a human operator to debug with.
+        # The running apps get their secrets via main.bicep secretRefs, not from this file.
         "mysql_admin_username": MYSQL_ADMIN_USERNAME,
         "mysql_admin_password": mysql_password,
         "acr_password": acr_password,
-        # Only monolith and bff exist right now. user-service/product-service/
-        # order-service are added here by the BFF itself (see
-        # azure_traffic.py's create_microservice_container_app) as the live
-        # migration creates each one — this file is re-read by teardown.py
-        # and verify_teardown.py, not by the running BFF, so it does not need
-        # to stay in sync with the BFF's in-memory registry in real time.
-        "container_apps": {
-            "monolith": "monolith",
-            "bff": "bff",
-        },
+        "container_apps": {name: name for name in SERVICES},
     }
     STATE_FILE.parent.mkdir(parents=True, exist_ok=True)
     STATE_FILE.write_text(json.dumps(state, indent=2))
     print(f"\nState persisted to {STATE_FILE} (gitignored).")
     static_web_app_url = f"https://{output_values['staticWebAppHostname']}"
-    print(f"\nFoundation + monolith are live. Static Web App: {clickable_url(static_web_app_url)}")
-    print("Open that URL, use the Shop against the monolith, then click 'Start Migration' on the")
-    print("Migrate page — that's what creates user-service/product-service/order-service for real.")
+    print(f"\nAll services are live. Static Web App: {clickable_url(static_web_app_url)}")
     print("\nRemember: MySQL Flexible Server bills whether idle or not — run `make teardown` when finished.")
     return 0
 

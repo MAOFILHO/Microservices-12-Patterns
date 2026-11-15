@@ -4,7 +4,7 @@ A small Contoso e-commerce system that shows **12 microservices patterns working
 Each pattern gets its own page with an explanation, when *not* to use it, and a live demo you
 can click.
 
-> **Status: M0, bootstrap.** The foundation is copied from
+> **Status: M1a, layout.** Three services, a gateway and the frontend run end to end. The foundation is copied from
 > [Azure-Ecommerce-Monolith-Microservices-Migration](https://github.com/MAOFILHO/Azure-Ecommerce-Monolith-Microservices-Migration).
 > The patterns arrive in 3 milestones. See [docs/PLAN.md](docs/PLAN.md).
 
@@ -38,6 +38,7 @@ can click.
 
 ```bash
 make setup
+make run      # frontend http://127.0.0.1:5273, gateway http://127.0.0.1:8100
 make test
 ```
 

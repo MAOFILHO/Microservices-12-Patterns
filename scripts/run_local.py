@@ -1,38 +1,21 @@
 #!/usr/bin/env python3
 """make run — launches the full local stack as plain Python/Node processes.
 
-No Docker Desktop, no containers. By default only the monolith + BFF +
-frontend start (the "before" state) — the three microservices start live
-when you click "Start Migration" on the Migrate page. Pass --all to start
-every service immediately (useful for testing/benchmarking outside the
-guided migration flow).
+No Docker Desktop, no containers. Starts every Flask service, then the gateway, then the
+frontend, each gated on its /health endpoint. The list comes from scripts/service_table.py.
 """
-import argparse
 import os
 import signal
 import subprocess
 import sys
 import time
+import urllib.error
+import urllib.request
 from pathlib import Path
 
-REPO_ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 from _procutil import ensure_port_free  # noqa: E402
-
-import urllib.request  # noqa: E402
-import urllib.error  # noqa: E402
-
-MONOLITH_DIR = REPO_ROOT / "monolith"
-BFF_DIR = REPO_ROOT / "bff"
-FRONTEND_DIR = REPO_ROOT / "frontend"
-MICROSERVICES_DIR = REPO_ROOT / "microservices"
-
-MONOLITH_PORT = int(os.environ.get("MONOLITH_PORT", 6000))
-BFF_PORT = int(os.environ.get("BFF_PORT", 8000))
-FRONTEND_PORT = int(os.environ.get("FRONTEND_PORT", 5173))
-USER_SERVICE_PORT = int(os.environ.get("USER_SERVICE_PORT", 5001))
-PRODUCT_SERVICE_PORT = int(os.environ.get("PRODUCT_SERVICE_PORT", 5002))
-ORDER_SERVICE_PORT = int(os.environ.get("ORDER_SERVICE_PORT", 5003))
+from service_table import FLASK_SERVICES, FRONTEND_DIR, FRONTEND_PORT, GATEWAY, Service  # noqa: E402
 
 processes: list[subprocess.Popen] = []
 
@@ -55,32 +38,39 @@ def _wait_for_health(url: str, timeout: float = 20.0) -> bool:
     return False
 
 
-def start_flask_service(name: str, service_dir: Path, port: int, port_env_var: str) -> subprocess.Popen:
-    ensure_port_free(port, name)
-    env = {**os.environ, "RUN_MODE": "local", "FLASK_ENV": "development", port_env_var: str(port)}
-    proc = subprocess.Popen([_venv_python(service_dir), "run.py"], cwd=str(service_dir), env=env)
+def _service_url_env() -> dict[str, str]:
+    """Every process gets every service's local URL (e.g. USER_SERVICE_BASE_URL)."""
+    return {f"{s.name.upper()}_SERVICE_BASE_URL": s.local_url for s in FLASK_SERVICES}
+
+
+def start_flask_service(svc: Service) -> subprocess.Popen:
+    ensure_port_free(svc.local_port, svc.name)
+    env = {**os.environ, **_service_url_env(), "RUN_MODE": "local", "FLASK_ENV": "development",
+           svc.port_env: str(svc.local_port)}
+    proc = subprocess.Popen([_venv_python(svc.path), "run.py"], cwd=str(svc.path), env=env)
     processes.append(proc)
-    print(f"  {name} starting on :{port} (pid {proc.pid})…")
+    print(f"  {svc.name} starting on :{svc.local_port} (pid {proc.pid})…")
     return proc
 
 
-def start_bff() -> subprocess.Popen:
-    ensure_port_free(BFF_PORT, "bff")
-    env = {**os.environ, "RUN_MODE": "local"}
-    python_bin = _venv_python(BFF_DIR)
+def start_gateway() -> subprocess.Popen:
+    ensure_port_free(GATEWAY.local_port, GATEWAY.name)
+    env = {**os.environ, **_service_url_env(), "RUN_MODE": "local",
+           "FRONTEND_ORIGIN_PORT": str(FRONTEND_PORT)}
     proc = subprocess.Popen(
-        [python_bin, "-m", "uvicorn", "app.main:app", "--host", "0.0.0.0", "--port", str(BFF_PORT)],
-        cwd=str(BFF_DIR),
+        [_venv_python(GATEWAY.path), "-m", "uvicorn", "app.main:app", "--host", "0.0.0.0",
+         "--port", str(GATEWAY.local_port)],
+        cwd=str(GATEWAY.path),
         env=env,
     )
     processes.append(proc)
-    print(f"  bff starting on :{BFF_PORT} (pid {proc.pid})…")
+    print(f"  gateway starting on :{GATEWAY.local_port} (pid {proc.pid})…")
     return proc
 
 
 def start_frontend() -> subprocess.Popen:
     ensure_port_free(FRONTEND_PORT, "frontend")
-    env = {**os.environ, "FRONTEND_PORT": str(FRONTEND_PORT), "VITE_BFF_BASE_URL": f"http://127.0.0.1:{BFF_PORT}"}
+    env = {**os.environ, "FRONTEND_PORT": str(FRONTEND_PORT), "VITE_GATEWAY_BASE_URL": GATEWAY.local_url}
     proc = subprocess.Popen(["npm", "run", "dev", "--", "--port", str(FRONTEND_PORT)], cwd=str(FRONTEND_DIR), env=env)
     processes.append(proc)
     print(f"  frontend starting on :{FRONTEND_PORT} (pid {proc.pid})…")
@@ -101,39 +91,32 @@ def shutdown(*_args):
 
 
 def main() -> int:
-    parser = argparse.ArgumentParser()
-    parser.add_argument("--all", action="store_true", help="also start the 3 microservices immediately")
-    args = parser.parse_args()
-
     signal.signal(signal.SIGINT, shutdown)
     signal.signal(signal.SIGTERM, shutdown)
 
     print("=== Starting local stack (no Docker) ===")
-    start_flask_service("monolith", MONOLITH_DIR, MONOLITH_PORT, "MONOLITH_PORT")
-    if not _wait_for_health(f"http://127.0.0.1:{MONOLITH_PORT}/health"):
-        print("monolith failed to become healthy — aborting.")
-        shutdown()
-        return 1
+    for svc in FLASK_SERVICES:
+        start_flask_service(svc)
+    for svc in FLASK_SERVICES:
+        if not _wait_for_health(f"{svc.local_url}/health"):
+            print(f"{svc.name} failed to become healthy — aborting.")
+            shutdown()
+            return 1
 
-    if args.all:
-        start_flask_service("user-service", MICROSERVICES_DIR / "user-service", USER_SERVICE_PORT, "USER_SERVICE_PORT")
-        start_flask_service("product-service", MICROSERVICES_DIR / "product-service", PRODUCT_SERVICE_PORT, "PRODUCT_SERVICE_PORT")
-        start_flask_service("order-service", MICROSERVICES_DIR / "order-service", ORDER_SERVICE_PORT, "ORDER_SERVICE_PORT")
-
-    start_bff()
-    if not _wait_for_health(f"http://127.0.0.1:{BFF_PORT}/health"):
-        print("bff failed to become healthy — aborting.")
+    start_gateway()
+    if not _wait_for_health(f"{GATEWAY.local_url}/health"):
+        print("gateway failed to become healthy — aborting.")
         shutdown()
         return 1
 
     start_frontend()
 
+    services = "\n".join(f"  {s.name:<9} {s.local_url}" for s in FLASK_SERVICES)
     print(f"""
 Local stack is up:
   Frontend  http://127.0.0.1:{FRONTEND_PORT}
-  BFF       http://127.0.0.1:{BFF_PORT}
-  Monolith  http://127.0.0.1:{MONOLITH_PORT}
-{"  (microservices also started via --all)" if args.all else "  Microservices start live from the Migrate page."}
+  Gateway   {GATEWAY.local_url}
+{services}
 
 Press Ctrl+C to stop everything.
 """)
