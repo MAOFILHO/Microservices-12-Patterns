@@ -73,3 +73,32 @@ def checkout():
     db.session.add(order_model)
     db.session.commit()
     return jsonify({"result": order_model.to_json()})
+
+
+# Pattern 1 demo: each service only has its own tables. This tries to read another service's
+# table through the order service's own database connection, and reports what really happens.
+# Table names come from a fixed allow-list, never from raw user input, so no SQL injection.
+FOREIGN_TABLES = {"product": "catalog", "stock_item": "inventory", "payment": "payment", "user": "user"}
+
+
+@order_api_blueprint.route("/api/order/isolation-test", methods=["GET"])
+def isolation_test():
+    from sqlalchemy import inspect, text
+
+    table = request.args.get("table", "product")
+    if table not in FOREIGN_TABLES:
+        return make_response(jsonify({"message": f"table must be one of {sorted(FOREIGN_TABLES)}"}), 400)
+    # Quote for the real dialect: double quotes on SQLite, backticks on MySQL.
+    sql = f"SELECT COUNT(*) FROM {db.engine.dialect.identifier_preparer.quote(table)}"
+    result = {
+        "attempted": sql,
+        "owner": FOREIGN_TABLES[table],
+        "order_tables": sorted(inspect(db.engine).get_table_names()),
+    }
+    try:
+        db.session.execute(text(sql))
+        result.update(blocked=False, error=None)
+    except Exception as exc:  # the expected outcome: the table does not exist in order_db
+        db.session.rollback()
+        result.update(blocked=True, error=str(getattr(exc, "orig", exc)))
+    return jsonify(result)

@@ -4,7 +4,7 @@ param name string
 param adminUsername string
 @secure()
 param adminPassword string
-param databaseNames array = ['user_db', 'catalog_db', 'order_db']
+param databaseNames array = ['user_db', 'catalog_db', 'order_db', 'payment_db', 'inventory_db']
 
 resource server 'Microsoft.DBforMySQL/flexibleServers@2023-12-30' = {
   name: name

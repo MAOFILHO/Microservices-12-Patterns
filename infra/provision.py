@@ -20,6 +20,7 @@ import json
 import os
 import secrets
 import string
+import shutil
 import subprocess
 import sys
 import time
@@ -192,15 +193,27 @@ def wait_for_acr_ready(resource_group: str, acr_name: str, timeout: float = 60.0
 def build_images(resource_group: str, acr_name: str) -> None:
     for service_name, service_dir in SERVICES.items():
         print(f"\n=== az acr build: {service_name} (cloud-side, no local Docker) ===")
-        run_az([
-            "acr", "build",
-            "--registry", acr_name,
-            "--resource-group", resource_group,
-            "--image", f"{service_name}:latest",
-            # Explicit: Container Apps runs amd64, and the owner's Mac is arm64.
-            "--platform", "linux/amd64",
-            str(service_dir),
-        ], capture=False)
+        # `az acr build` only uploads the service's own folder, so stage a copy of shared/
+        # (shop_common) inside it as _shared/. Each Dockerfile installs ./_shared. Gitignored.
+        staged = service_dir / "_shared"
+        shutil.rmtree(staged, ignore_errors=True)
+        shutil.copytree(REPO_ROOT / "shared", staged, ignore=shutil.ignore_patterns("*.egg-info", "__pycache__"))
+        try:
+            _acr_build(resource_group, acr_name, service_name, service_dir)
+        finally:
+            shutil.rmtree(staged, ignore_errors=True)
+
+
+def _acr_build(resource_group: str, acr_name: str, service_name: str, service_dir: Path) -> None:
+    run_az([
+        "acr", "build",
+        "--registry", acr_name,
+        "--resource-group", resource_group,
+        "--image", f"{service_name}:latest",
+        # Explicit: Container Apps runs amd64, and the owner's Mac is arm64.
+        "--platform", "linux/amd64",
+        str(service_dir),
+    ], capture=False)
 
 
 def deploy_bicep(resource_group: str, location: str, names: dict, mysql_password: str, keep_warm: bool) -> dict:

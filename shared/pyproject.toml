@@ -1,0 +1,24 @@
+[build-system]
+requires = ["setuptools>=68"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "shop-common"
+version = "0.1.0"
+description = "Shared observability helpers for every service and the gateway (pattern 6)."
+requires-python = ">=3.12"
+dependencies = [
+    "opentelemetry-sdk==1.29.0",
+    "opentelemetry-exporter-otlp-proto-http==1.29.0",
+    "opentelemetry-instrumentation-requests==0.50b0",
+    "opentelemetry-instrumentation-httpx==0.50b0",
+    "opentelemetry-instrumentation-sqlalchemy==0.50b0",
+    "prometheus-client==0.21.1",
+]
+
+[project.optional-dependencies]
+flask = ["opentelemetry-instrumentation-flask==0.50b0"]
+fastapi = ["opentelemetry-instrumentation-fastapi==0.50b0"]
+
+[tool.setuptools.packages.find]
+include = ["shop_common*"]

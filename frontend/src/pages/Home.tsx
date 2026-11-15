@@ -18,18 +18,18 @@ export default function Home() {
         </Link>
         <Link to="/patterns" className="card" style={{ textDecoration: "none", color: "inherit" }}>
           <h3>Patterns</h3>
-          <p className="muted">The 12 patterns, each with a live demo as its milestone lands.</p>
+          <p className="muted">The 12 patterns. Database per Service, Bounded Context, API Gateway and Observability are live now.</p>
         </Link>
       </div>
 
       <section className="card">
         <h2>Architecture today</h2>
         <pre style={{ overflowX: "auto" }}>{`
-Browser → API gateway ──┬──► user     → user_db
-                        ├──► catalog  → catalog_db
-                        └──► order    → order_db
-                               │
-                               └──HTTP──► user (validates the caller)
+Browser → API gateway ──┬──► user       → user_db
+  (request IDs,         ├──► catalog    → catalog_db
+   tracing, metrics,    ├──► order      → order_db ──HTTP──► user (validates the caller)
+   aggregation)         ├──► payment    → payment_db
+                        └──► inventory  → inventory_db
 `}</pre>
       </section>
     </div>

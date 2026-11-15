@@ -1,4 +1,4 @@
-@description('One reusable Container App module — instantiated once per service from main.bicep (user, catalog, order, gateway). Explicit cheap defaults: Consumption plan, minReplicas 0 (scale-to-zero), 0.25 vCPU / 0.5Gi.')
+@description('One reusable Container App module — instantiated once per service from main.bicep (user, catalog, order, payment, inventory, gateway). Explicit cheap defaults: Consumption plan, minReplicas 0 (scale-to-zero), 0.25 vCPU / 0.5Gi.')
 param location string
 param name string
 param environmentId string

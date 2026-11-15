@@ -2,6 +2,7 @@
 import os
 
 from flask import Flask
+from shop_common.flask_support import install as install_observability
 from flask_sqlalchemy import SQLAlchemy
 from flask_migrate import Migrate
 
@@ -32,8 +33,7 @@ def create_app(config_name: str | None = None) -> Flask:
 
         seed_products_if_empty()
 
-        @app.get("/health")
-        def health():
-            return {"status": "ok", "service": "catalog-service"}
+        # /health, /health/db, /debug/spans, /metrics, tracing and JSON logs (patterns 1 and 6).
+        install_observability(app, "catalog", db)
 
         return app

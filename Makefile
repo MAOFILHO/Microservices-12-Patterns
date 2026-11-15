@@ -26,6 +26,8 @@ test:
 	services/user/.venv/bin/python -m pytest services/user/tests -v
 	services/catalog/.venv/bin/python -m pytest services/catalog/tests -v
 	services/order/.venv/bin/python -m pytest services/order/tests -v
+	services/payment/.venv/bin/python -m pytest services/payment/tests -v
+	services/inventory/.venv/bin/python -m pytest services/inventory/tests -v
 	gateway/.venv/bin/python -m pytest gateway/tests -v
 
 smoke:

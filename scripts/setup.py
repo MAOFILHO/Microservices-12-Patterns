@@ -14,7 +14,7 @@ REPO_ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 from _procutil import ensure_port_free  # noqa: E402
 
-from service_table import FRONTEND_DIR, FRONTEND_PORT, PYTHON_SERVICES  # noqa: E402
+from service_table import FRONTEND_DIR, FRONTEND_PORT, PYTHON_SERVICES, SHARED_DIR  # noqa: E402
 
 MIN_PYTHON = (3, 12)
 
@@ -115,6 +115,9 @@ def main() -> int:
         # can transiently fail with FileNotFoundError before the new script is fully in place.
         venv_python = service_dir / ".venv" / "bin" / "python"
         subprocess.run([str(venv_python), "-m", "pip", "install", "pytest==8.3.4", "-q"], check=True)
+        # Shared observability helpers, editable so changes in shared/ apply without reinstalling.
+        extra = "fastapi" if svc.kind == "fastapi" else "flask"
+        subprocess.run([str(venv_python), "-m", "pip", "install", "-q", "-e", f"{SHARED_DIR}[{extra}]"], check=True)
     install_frontend()
 
     print("\nSetup complete. Run `make run` (or `python scripts/run_local.py`) next.")

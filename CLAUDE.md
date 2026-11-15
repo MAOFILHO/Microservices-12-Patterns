@@ -27,20 +27,34 @@ history, monolith dropped). The full agreed plan is in [`docs/PLAN.md`](docs/PLA
 - Name prefix: `ms12p` (parent uses `flaskms`). Teardown deletes the whole resource group, so a
   shared name would delete the other project.
 
-## Current state (M1a, layout)
-- Folders: `services/{user,catalog,order}/` (Flask, one DB each), `gateway/` (FastAPI),
-  `frontend/`, `infra/`, `scripts/`, `tests/`. The monolith and the old migration engine are gone.
+## Current state (M1, foundation: patterns 1, 2, 5, 6 live)
+- Folders: `services/{user,catalog,order,payment,inventory}/` (Flask, one DB each), `gateway/`
+  (FastAPI), `shared/` (`shop_common`), `frontend/`, `infra/`, `scripts/`, `tests/`.
 - **One service table**: `scripts/service_table.py` lists every local process, folder and port.
   `setup.py`, `run_local.py`, `provision.py` and the smoke tests all read it. Add a service there.
-- Ports: user 5101, catalog 5102, order 5103, gateway 8100, frontend 5273 (registry 8500 and
-  payment/inventory 5104-5105 arrive in later milestones).
-- Gateway routes `/api/shop/<path>` to `/api/<path>` on the owning service by first path segment
-  (`gateway/app/config.py` `ROUTE_OWNERS`). No auth or aggregation yet (M1).
-- The catalog service keeps the `product` resource name in its API (`/api/product(s)`) and its
-  `product_api` package. Only the service, its env vars (`CATALOG_*`) and its DB (`catalog_db`) are
-  named catalog.
-- Azure: one Container App per service plus the gateway, all external ingress, images built with
-  `az acr build --platform linux/amd64`.
+- Ports: user 5101, catalog 5102, order 5103, payment 5104, inventory 5105, gateway 8100,
+  frontend 5273 (registry 8500 arrives in M2).
+- **`shop_common`** (`shared/`): every service calls `shop_common.flask_support.install(app, name, db)`
+  inside its app context. It adds `/health`, `/health/db`, `/debug/spans`, `/metrics`, OpenTelemetry
+  tracing (Flask, requests, SQLAlchemy per engine), JSON logs with trace/request IDs, and metrics.
+  The gateway uses `gateway/app/observability.py` (FastAPI + httpx). `setup.py` installs `shared/`
+  editable into every venv; `provision.py` stages it as `<service>/_shared` for `az acr build`.
+- Traces: each process keeps its last 2,000 spans in memory (`SPAN_STORE`); the gateway stitches a
+  trace from every service's `/debug/spans`. Database span names are trimmed to the file name so
+  no local path leaks. Containers run gunicorn with 1 worker + 4 threads so one process holds all
+  spans. `OTEL_EXPORTER_OTLP_ENDPOINT` optionally exports too.
+- Gotchas solved: FastAPI tracing middleware must be added AFTER the request-ID middleware (the
+  last-added Starlette middleware runs outermost); Flask-SQLAlchemy's engine is missed by the
+  global SQLAlchemy hook, so it is instrumented per engine; the httpx hook only loads where httpx
+  is installed.
+- Gateway: `/api/shop/<path>` (GET/POST only) routed by `ROUTE_OWNERS`; `/api/order-summary`
+  aggregation; demo endpoints in `gateway/app/routers/patterns.py`. No auth check yet (JWT is M2).
+- The catalog service keeps the `product` resource name in its API (`/api/product(s)`). The
+  unauthenticated `DELETE /api/product/<slug>` was removed.
+- Frontend: `/patterns` grid, `/patterns/:slug` page from `frontend/src/patterns/content.ts`, demos
+  in `frontend/src/patterns/demos/`. Signed-in user is read from localStorage `shop_auth`.
+- Smoke tests create users and products in the local SQLite DBs; delete `services/*/instance/`
+  for a clean catalog.
 
 ## Stack
 Python 3.12 (Flask 3.1 services, FastAPI gateway), Node 18+ (React 18, TypeScript 5, Vite 5),

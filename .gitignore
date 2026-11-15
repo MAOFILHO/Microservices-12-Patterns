@@ -40,3 +40,10 @@ migrations/versions/__pycache__/
 
 # --- Staged for az acr build, cleaned up after (see infra/provision.py build_images) ---
 bff/scripts/
+
+# --- Staged by infra/provision.py for az acr build ---
+_shared/
+shared/*.egg-info/
+
+# --- TypeScript build cache ---
+*.tsbuildinfo
