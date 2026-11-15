@@ -18,7 +18,7 @@ export default function Home() {
         </Link>
         <Link to="/patterns" className="card" style={{ textDecoration: "none", color: "inherit" }}>
           <h3>Patterns</h3>
-          <p className="muted">The 12 patterns. 11 are live now; CI-CD arrives in M3b.</p>
+          <p className="muted">The 12 patterns. All 12 are live, each with a working demo.</p>
         </Link>
       </div>
 

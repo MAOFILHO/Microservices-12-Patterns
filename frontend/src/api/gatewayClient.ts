@@ -311,3 +311,25 @@ export const asyncApi = {
     }),
   runtime: () => request<{ processes: RuntimeInfo[] }>("/api/patterns/runtime"),
 };
+
+// --- M3b demo endpoint (pattern 3) ---------------------------------------------------------------
+
+export interface WorkflowRun {
+  workflow: string;
+  status: string;
+  conclusion: string | null;
+  commit: string;
+  url: string;
+  created_at: string;
+}
+
+export interface DeliveryView {
+  repo: string;
+  main: { sha: string; short: string; url: string } | null;
+  services: { service: string; instance: string; git_sha: string | null; status: "current" | "behind" | "local" | "unknown" }[];
+  runs: { ci: WorkflowRun | null; deploy: WorkflowRun | null };
+}
+
+export const deliveryApi = {
+  view: () => request<DeliveryView>("/api/patterns/delivery"),
+};

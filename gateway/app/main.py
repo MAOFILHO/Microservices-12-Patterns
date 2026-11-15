@@ -4,7 +4,7 @@ from fastapi.middleware.cors import CORSMiddleware
 from shop_common.discovery import DISCOVERY
 
 from . import config, observability
-from .routers import patterns, resilience, services, shop
+from .routers import delivery, patterns, resilience, services, shop
 
 app = FastAPI(
     title="Microservices 12 Patterns — API Gateway",
@@ -32,6 +32,7 @@ DISCOVERY.start()
 app.include_router(shop.router)
 app.include_router(patterns.router)
 app.include_router(resilience.router)
+app.include_router(delivery.router)
 app.include_router(services.router)
 
 

@@ -4,11 +4,10 @@ A small Contoso e-commerce system that shows **12 microservices patterns working
 Each pattern gets its own page with an explanation, when *not* to use it, and a live demo you
 can click.
 
-> **Status: M3a, async and packaging.** 11 of 12 patterns are live. M3a adds the Saga,
-> Event-Driven Architecture and Containerization to M1 (patterns 1, 2, 5, 6) and M2 (4, 10, 11, 12).
-> The foundation is copied from
+> **Status: M3b, delivery.** All 12 patterns are live locally, each with a working demo. The
+> first real Azure run is the last step (issue #11). The foundation is copied from
 > [Azure-Ecommerce-Monolith-Microservices-Migration](https://github.com/MAOFILHO/Azure-Ecommerce-Monolith-Microservices-Migration).
-> CI-CD and the Azure run arrive in M3b. See [docs/PLAN.md](docs/PLAN.md).
+> See [docs/PLAN.md](docs/PLAN.md) and the [M3b issues](https://github.com/MAOFILHO/Microservices-12-Patterns/issues).
 
 ## The 12 patterns
 
@@ -16,7 +15,7 @@ can click.
 |---|---|---|---|
 | 1 | Database per Service | Gives each service its own database | **Live (M1)** |
 | 2 | Bounded Context | Splits one large domain into clear business domains | **Live (M1)** |
-| 3 | CI-CD Pipeline | Builds, tests and deploys every service automatically | M3b |
+| 3 | CI-CD Pipeline | Builds, tests and deploys every service automatically | **Live (M3b)** |
 | 4 | Circuit Breaker | Stops calls to a failing service to prevent more failures | **Live (M2)** |
 | 5 | API Gateway | Routes client requests to the right service | **Live (M1)** |
 | 6 | Observability | Collects logs, metrics and traces from every service | **Live (M1)** |
@@ -81,6 +80,13 @@ One click, traced through every process: 25 spans across 5 processes, including 
 database queries, drawn as a waterfall. Metrics per service come from each `/metrics` endpoint.
 
 <img width="100%" alt="Observability demo: a trace waterfall across gateway, user, order, catalog and inventory" src="docs/screenshots/p06-observability.jpg" />
+
+### 3. CI-CD Pipeline
+Which commit each running service was built from, compared with the latest commit on main, and
+the latest CI and Deploy runs, read from GitHub. Locally every process is a "local build"; in Azure
+each image carries its commit, so a service that is behind main shows up at once.
+
+<img width="100%" alt="CI-CD demo: each service's build commit compared with main, and the latest CI and Deploy runs" src="docs/screenshots/p03-ci-cd.jpg" />
 
 ### 4. Circuit Breaker
 Switch payment to slow and send 10 calls. Each order replica's breaker opens after 3 failures.
