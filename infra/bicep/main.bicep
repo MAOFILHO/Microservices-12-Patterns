@@ -1,7 +1,8 @@
 @description('''
 Deploys the whole stack: ACR (Basic), Container Apps Environment (Consumption), MySQL Flexible
 Server (Burstable B1ms, one logical DB per service), a Static Web App (Free) for the React
-frontend, and one Container App per service (user, catalog, order) plus the API gateway.
+frontend, and one Container App per service (user, catalog, order, payment, inventory) plus
+the API gateway.
 Every SKU is the cheapest tier that meets the need. Names are resolved by infra/provision.py
 BEFORE this deployment runs, after checking for collisions.
 ''')
@@ -138,6 +139,42 @@ module order 'modules/container-app.bicep' = {
   }
 }
 
+module payment 'modules/container-app.bicep' = {
+  name: 'payment'
+  params: {
+    location: location
+    name: 'payment'
+    environmentId: containerAppsEnv.outputs.environmentId
+    acrLoginServer: acr.outputs.loginServer
+    acrUsername: acr.outputs.registryName
+    acrPassword: acrPassword
+    mysqlAdminPassword: mysqlAdminPassword
+    imageName: 'payment'
+    imageTag: imageTag
+    targetPort: 5104
+    minReplicas: minReplicas
+    envVars: commonEnv
+  }
+}
+
+module inventory 'modules/container-app.bicep' = {
+  name: 'inventory'
+  params: {
+    location: location
+    name: 'inventory'
+    environmentId: containerAppsEnv.outputs.environmentId
+    acrLoginServer: acr.outputs.loginServer
+    acrUsername: acr.outputs.registryName
+    acrPassword: acrPassword
+    mysqlAdminPassword: mysqlAdminPassword
+    imageName: 'inventory'
+    imageTag: imageTag
+    targetPort: 5105
+    minReplicas: minReplicas
+    envVars: commonEnv
+  }
+}
+
 module gateway 'modules/container-app.bicep' = {
   name: 'gateway'
   params: {
@@ -157,6 +194,8 @@ module gateway 'modules/container-app.bicep' = {
       { name: 'USER_SERVICE_BASE_URL', value: 'https://${user.outputs.fqdn}' }
       { name: 'CATALOG_SERVICE_BASE_URL', value: 'https://${catalog.outputs.fqdn}' }
       { name: 'ORDER_SERVICE_BASE_URL', value: 'https://${order.outputs.fqdn}' }
+      { name: 'PAYMENT_SERVICE_BASE_URL', value: 'https://${payment.outputs.fqdn}' }
+      { name: 'INVENTORY_SERVICE_BASE_URL', value: 'https://${inventory.outputs.fqdn}' }
       { name: 'FRONTEND_ORIGIN', value: 'https://${staticWebApp.outputs.defaultHostname}' }
     ]
   }

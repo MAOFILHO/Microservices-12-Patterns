@@ -32,10 +32,14 @@ FLASK_SERVICES = [
     Service("user", REPO_ROOT / "services" / "user", 5101, "USER_SERVICE_PORT", "flask"),
     Service("catalog", REPO_ROOT / "services" / "catalog", 5102, "CATALOG_SERVICE_PORT", "flask"),
     Service("order", REPO_ROOT / "services" / "order", 5103, "ORDER_SERVICE_PORT", "flask"),
+    Service("payment", REPO_ROOT / "services" / "payment", 5104, "PAYMENT_SERVICE_PORT", "flask"),
+    Service("inventory", REPO_ROOT / "services" / "inventory", 5105, "INVENTORY_SERVICE_PORT", "flask"),
 ]
 GATEWAY = Service("gateway", REPO_ROOT / "gateway", 8100, "GATEWAY_PORT", "fastapi")
 
 PYTHON_SERVICES = FLASK_SERVICES + [GATEWAY]
 
+# shop_common (shared/), installed into every Python venv by setup.py.
+SHARED_DIR = REPO_ROOT / "shared"
 FRONTEND_DIR = REPO_ROOT / "frontend"
 FRONTEND_PORT = int(os.environ.get("FRONTEND_PORT", 5273))

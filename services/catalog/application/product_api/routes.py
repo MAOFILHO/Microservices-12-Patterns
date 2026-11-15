@@ -31,15 +31,3 @@ def product(slug):
         return make_response(jsonify({"message": "Cannot find product"}), 404)
     return jsonify({"result": item.to_json()})
 
-
-@product_api_blueprint.route("/api/product/<slug>", methods=["DELETE"])
-def delete_product(slug):
-    """Lets scripts/benchmark.py clean up the throwaway products it creates
-    to measure create_product latency, instead of leaving hundreds of
-    'bench-*' rows permanently cluttering the Shop catalog."""
-    item = Product.query.filter_by(slug=slug).first()
-    if item is None:
-        return make_response(jsonify({"message": "Cannot find product"}), 404)
-    db.session.delete(item)
-    db.session.commit()
-    return jsonify({"message": "Product deleted"})

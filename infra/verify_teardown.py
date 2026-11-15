@@ -36,7 +36,7 @@ def main() -> int:
         if not resource_group_exists(resource_group):
             print(f"PASS: resource group '{resource_group}' no longer exists.")
             print("This confirms ACR, Container Apps Environment + every Container App (user, catalog, "
-                  "order, gateway), MySQL "
+                  "order, payment, inventory, gateway), MySQL "
                   "Flexible Server, and the Static Web App were all deleted with it.")
             STATE_FILE.unlink()
             print(f"Removed {STATE_FILE}.")

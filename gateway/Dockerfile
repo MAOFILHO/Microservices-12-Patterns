@@ -7,6 +7,8 @@ COPY requirements.txt .
 RUN pip install --no-cache-dir --root-user-action=ignore -r requirements.txt
 
 COPY . .
+# shared/ (shop_common) is staged into ./_shared by infra/provision.py before `az acr build`.
+RUN pip install --no-cache-dir --root-user-action=ignore "./_shared[fastapi]"
 
 ENV RUN_MODE=azure \
     PYTHONUNBUFFERED=1
