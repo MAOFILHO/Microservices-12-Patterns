@@ -2,8 +2,12 @@ import { ReactNode } from "react";
 import { Link, useParams } from "react-router-dom";
 import ApiGatewayDemo from "../patterns/demos/ApiGatewayDemo";
 import BoundedContextDemo from "../patterns/demos/BoundedContextDemo";
+import CircuitBreakerDemo from "../patterns/demos/CircuitBreakerDemo";
+import ContractTestingDemo from "../patterns/demos/ContractTestingDemo";
 import DatabasePerServiceDemo from "../patterns/demos/DatabasePerServiceDemo";
 import ObservabilityDemo from "../patterns/demos/ObservabilityDemo";
+import ServiceDiscoveryDemo from "../patterns/demos/ServiceDiscoveryDemo";
+import StatelessDemo from "../patterns/demos/StatelessDemo";
 import { PATTERNS } from "../patterns/content";
 
 const DEMOS: Record<string, () => ReactNode> = {
@@ -11,6 +15,10 @@ const DEMOS: Record<string, () => ReactNode> = {
   "bounded-context": () => <BoundedContextDemo />,
   "api-gateway": () => <ApiGatewayDemo />,
   observability: () => <ObservabilityDemo />,
+  "circuit-breaker": () => <CircuitBreakerDemo />,
+  "stateless-services": () => <StatelessDemo />,
+  "contract-testing": () => <ContractTestingDemo />,
+  "service-discovery": () => <ServiceDiscoveryDemo />,
 };
 
 export default function PatternPage() {

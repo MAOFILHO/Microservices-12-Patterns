@@ -6,13 +6,11 @@ import os
 
 from flask import Flask
 from shop_common.flask_support import install as install_observability
-from flask_login import LoginManager
 from flask_sqlalchemy import SQLAlchemy
 from flask_migrate import Migrate
 
 db = SQLAlchemy()
 migrate = Migrate()
-login_manager = LoginManager()
 
 
 def create_app(config_name: str | None = None) -> Flask:
@@ -24,7 +22,6 @@ def create_app(config_name: str | None = None) -> Flask:
 
     db.init_app(app)
     migrate.init_app(app, db)
-    login_manager.init_app(app)
 
     with app.app_context():
         from . import models  # noqa: F401

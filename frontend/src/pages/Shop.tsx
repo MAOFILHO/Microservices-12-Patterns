@@ -3,14 +3,16 @@ import { Order, Product, shopApi } from "../api/gatewayClient";
 
 interface Auth {
   username: string;
-  apiKey: string;
+  token: string;
 }
 
 const AUTH_KEY = "shop_auth";
 
 function loadAuth(): Auth | null {
   const raw = localStorage.getItem(AUTH_KEY);
-  return raw ? (JSON.parse(raw) as Auth) : null;
+  const auth = raw ? (JSON.parse(raw) as Partial<Auth>) : null;
+  // Sign-ins saved before M2 hold an old API key, not a token: treat them as signed out.
+  return auth?.token && auth.username ? (auth as Auth) : null;
 }
 
 function saveAuth(auth: Auth | null) {
@@ -61,7 +63,7 @@ export default function Shop() {
       return;
     }
     shopApi
-      .getCart(currentAuth.apiKey)
+      .getCart(currentAuth.token)
       .then((data) => setCart(data.result ?? null))
       .catch(() => setCart(null));
   }
@@ -85,8 +87,8 @@ export default function Shop() {
       if (authMode === "register") {
         await shopApi.register(username, email, password);
       }
-      const { api_key } = await shopApi.login(username, password);
-      const newAuth = { username, apiKey: api_key };
+      const { token } = await shopApi.login(username, password);
+      const newAuth = { username, token };
       setAuth(newAuth);
       saveAuth(newAuth);
       refreshCart(newAuth);
@@ -107,7 +109,7 @@ export default function Shop() {
     if (!auth) return;
     setCartError(null);
     try {
-      const { result } = await shopApi.addToCart(auth.apiKey, productId, 1);
+      const { result } = await shopApi.addToCart(auth.token, productId, 1);
       setCart(result);
     } catch (err) {
       setCartError(String(err));
@@ -119,7 +121,7 @@ export default function Shop() {
     setCartError(null);
     setCheckoutMessage(null);
     try {
-      const { result } = await shopApi.checkout(auth.apiKey);
+      const { result } = await shopApi.checkout(auth.token);
       setCart(result);
       setCheckoutMessage("Order placed! Thank you.");
     } catch (err) {

@@ -5,7 +5,7 @@ build-backend = "setuptools.build_meta"
 [project]
 name = "shop-common"
 version = "0.1.0"
-description = "Shared observability helpers for every service and the gateway (pattern 6)."
+description = "Shared plumbing for every service and the gateway: observability (6), tokens (10), discovery (12)."
 requires-python = ">=3.12"
 dependencies = [
     "opentelemetry-sdk==1.29.0",
@@ -14,6 +14,7 @@ dependencies = [
     "opentelemetry-instrumentation-httpx==0.50b0",
     "opentelemetry-instrumentation-sqlalchemy==0.50b0",
     "prometheus-client==0.21.1",
+    "PyJWT[crypto]==2.15.1",
 ]
 
 [project.optional-dependencies]

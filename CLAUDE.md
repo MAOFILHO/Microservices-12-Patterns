@@ -27,34 +27,41 @@ history, monolith dropped). The full agreed plan is in [`docs/PLAN.md`](docs/PLA
 - Name prefix: `ms12p` (parent uses `flaskms`). Teardown deletes the whole resource group, so a
   shared name would delete the other project.
 
-## Current state (M1, foundation: patterns 1, 2, 5, 6 live)
+## Current state (M2: patterns 1, 2, 4, 5, 6, 10, 11, 12 live)
 - Folders: `services/{user,catalog,order,payment,inventory}/` (Flask, one DB each), `gateway/`
-  (FastAPI), `shared/` (`shop_common`), `frontend/`, `infra/`, `scripts/`, `tests/`.
-- **One service table**: `scripts/service_table.py` lists every local process, folder and port.
-  `setup.py`, `run_local.py`, `provision.py` and the smoke tests all read it. Add a service there.
-- Ports: user 5101, catalog 5102, order 5103, payment 5104, inventory 5105, gateway 8100,
-  frontend 5273 (registry 8500 arrives in M2).
+  (FastAPI), `registry/` (FastAPI), `shared/` (`shop_common`), `contracts/`, `frontend/`, `infra/`,
+  `scripts/`, `tests/`.
+- **One service table**: `scripts/service_table.py` lists every local process, folder and port, plus
+  `REPLICA_PORTS` (order also on 5113) and `CONTRACT_SUITES`. `setup.py`, `run_local.py`,
+  `provision.py` and the smoke tests all read it. Add a service there.
+- Ports: user 5101, catalog 5102, order 5103 + 5113, payment 5104, inventory 5105, gateway 8100,
+  registry 8500, frontend 5273.
 - **`shop_common`** (`shared/`): every service calls `shop_common.flask_support.install(app, name, db)`
-  inside its app context. It adds `/health`, `/health/db`, `/debug/spans`, `/metrics`, OpenTelemetry
-  tracing (Flask, requests, SQLAlchemy per engine), JSON logs with trace/request IDs, and metrics.
-  The gateway uses `gateway/app/observability.py` (FastAPI + httpx). `setup.py` installs `shared/`
-  editable into every venv; `provision.py` stages it as `<service>/_shared` for `az acr build`.
-- Traces: each process keeps its last 2,000 spans in memory (`SPAN_STORE`); the gateway stitches a
-  trace from every service's `/debug/spans`. Database span names are trimmed to the file name so
-  no local path leaks. Containers run gunicorn with 1 worker + 4 threads so one process holds all
-  spans. `OTEL_EXPORTER_OTLP_ENDPOINT` optionally exports too.
-- Gotchas solved: FastAPI tracing middleware must be added AFTER the request-ID middleware (the
-  last-added Starlette middleware runs outermost); Flask-SQLAlchemy's engine is missed by the
-  global SQLAlchemy hook, so it is instrumented per engine; the httpx hook only loads where httpx
-  is installed.
-- Gateway: `/api/shop/<path>` (GET/POST only) routed by `ROUTE_OWNERS`; `/api/order-summary`
-  aggregation; demo endpoints in `gateway/app/routers/patterns.py`. No auth check yet (JWT is M2).
-- The catalog service keeps the `product` resource name in its API (`/api/product(s)`). The
-  unauthenticated `DELETE /api/product/<slug>` was removed.
-- Frontend: `/patterns` grid, `/patterns/:slug` page from `frontend/src/patterns/content.ts`, demos
-  in `frontend/src/patterns/demos/`. Signed-in user is read from localStorage `shop_auth`.
+  inside its app context. It adds `/health`, `/health/db`, `/debug/spans`, `/metrics`,
+  `POST /debug/crash` (only with `CHAOS_ENABLED=1`), the `X-Instance-Id` header, tracing, JSON logs,
+  metrics, and registry heartbeats when `SERVICE_PUBLIC_URL` and `REGISTRY_URL` are set.
+  `auth.py` verifies RS256 tokens; `discovery.py` heartbeats and round-robins (urllib, so no spans);
+  `contract_testing.py` runs Pact provider verification. `setup.py` installs `shared/` editable;
+  `provision.py` stages it as `<service>/_shared` for `az acr build`.
+- Tokens (pattern 10): the user service signs (key from `JWT_PRIVATE_KEY_PEM`, else
+  `services/user/instance/jwt_private.pem`, git-ignored). Gateway and order verify with
+  `/api/user/public-key`. Flask-Login and the `api_key` column are gone. Frontend sends `Bearer`.
+- Gateway: rejects `order` paths with a bad token at the edge; `config.url_for()` round-robins via
+  the registry, falls back to `SERVICE_BASE_URLS`; the shop proxy fails over to the next replica on a
+  refused connection. Trace stitching and metrics read every replica (`config.urls_for()`).
+- Circuit breaker (pattern 4): `services/order/application/order_api/api/clients.py`, pybreaker
+  (3 failures, 15 s) + tenacity (1 retry, 1 s timeout), only 5xx/timeouts count. Checkout prices from
+  catalog, charges payment, keeps the cart on 503. Payment has a `healthy|failing|slow` switch.
+- Contracts (pattern 11): order's tests write `contracts/pacts/order-{payment,catalog}.json`; payment
+  and catalog verify them. CI fails if the regenerated files differ. Pact (pact-python 4.2) is
+  test-only, installed from `contracts/requirements.txt`, never in images.
+- `make run` sets `REGISTRY_URL`, `CHAOS_ENABLED=1`, `INSTANCE_ID`, and restarts a stopped service
+  after 20 s. Registry TTL 10 s, heartbeat 2 s. Azure uses Container Apps DNS (no registry yet).
+- Gotchas solved: FastAPI tracing middleware must be added AFTER the request-ID middleware; Flask-
+  SQLAlchemy's engine is instrumented per engine; Pact's `Verifier` needs `host="127.0.0.1"`; DB writes
+  inside a Pact state handler deadlock on SQLite (seed before verifying instead).
 - Smoke tests create users and products in the local SQLite DBs; delete `services/*/instance/`
-  for a clean catalog.
+  for a clean catalog (this also deletes the local signing key, which logs everyone out).
 
 ## Stack
 Python 3.12 (Flask 3.1 services, FastAPI gateway), Node 18+ (React 18, TypeScript 5, Vite 5),

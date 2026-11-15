@@ -25,6 +25,9 @@ jobs:
             requirements: gateway/requirements.txt
             tests: gateway/tests
             shared: fastapi
+          - suite: registry
+            requirements: registry/requirements.txt
+            tests: registry/tests
           - suite: user
             requirements: services/user/requirements.txt
             tests: services/user/tests
@@ -33,14 +36,17 @@ jobs:
             requirements: services/catalog/requirements.txt
             tests: services/catalog/tests
             shared: flask
+            contracts: true
           - suite: order
             requirements: services/order/requirements.txt
             tests: services/order/tests
             shared: flask
+            contracts: true
           - suite: payment
             requirements: services/payment/requirements.txt
             tests: services/payment/tests
             shared: flask
+            contracts: true
           - suite: inventory
             requirements: services/inventory/requirements.txt
             tests: services/inventory/tests
@@ -61,8 +67,18 @@ jobs:
         if: matrix.shared
         run: pip install "./shared[${{ matrix.shared }}]"
 
+      - name: Install Pact (contract tests)
+        if: matrix.contracts
+        run: pip install -r contracts/requirements.txt
+
       - name: Run tests
         run: python -m pytest ${{ matrix.tests }} -v
+
+      # The order suite regenerates the contracts it consumes. If they differ from the committed
+      # files, the consumer changed what it needs without committing the new contract.
+      - name: Contracts are up to date
+        if: matrix.suite == 'order'
+        run: git diff --exit-code contracts/pacts
 
   frontend:
     name: Frontend (build)

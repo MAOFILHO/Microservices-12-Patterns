@@ -5,18 +5,38 @@ Endpoints added to every service:
   GET /health/db       which database this service owns (pattern 1); credentials never shown
   GET /debug/spans     this process's recent spans, optionally filtered by ?trace_id= (pattern 6)
   GET /metrics         Prometheus text format (pattern 6)
+  POST /debug/crash    stops this process, for the replica and discovery demos (CHAOS_ENABLED=1 only)
+
+Every response carries X-Instance-Id, so a demo can show which replica answered (pattern 10).
+With REGISTRY_URL and SERVICE_PUBLIC_URL set, the service registers itself (pattern 12).
 """
+import os
+import threading
 import time
 
 from flask import Flask, Response, g, jsonify, request
 from sqlalchemy import inspect
 
 from . import metrics
+from .discovery import DISCOVERY
 from .telemetry import REQUEST_ID_HEADER, SPAN_STORE, current_trace_id, get_logger, init_tracing
+
+
+INSTANCE_HEADER = "X-Instance-Id"
+
+
+def instance_id(service_name: str) -> str:
+    """Set by run_local.py (e.g. order-5113); Container Apps sets the replica name."""
+    return os.environ.get("INSTANCE_ID") or os.environ.get("CONTAINER_APP_REPLICA_NAME") or f"{service_name}-{os.getpid()}"
+
+
+def chaos_enabled() -> bool:
+    return os.environ.get("CHAOS_ENABLED") == "1"
 
 
 def install(app: Flask, service_name: str, db) -> None:
     init_tracing(service_name)
+    this_instance = instance_id(service_name)
     from opentelemetry.instrumentation.flask import FlaskInstrumentor
 
     FlaskInstrumentor().instrument_app(app, excluded_urls="health,debug/spans,metrics")
@@ -33,6 +53,7 @@ def install(app: Flask, service_name: str, db) -> None:
 
     @app.after_request
     def _record(response):
+        response.headers[INSTANCE_HEADER] = this_instance
         route = request.url_rule.rule if request.url_rule else "unmatched"
         if route in ("/health", "/debug/spans", "/metrics"):
             return response
@@ -51,7 +72,7 @@ def install(app: Flask, service_name: str, db) -> None:
 
     @app.get("/health")
     def health():
-        return {"status": "ok", "service": service_name}
+        return {"status": "ok", "service": service_name, "instance": this_instance}
 
     @app.get("/health/db")
     def health_db():
@@ -75,3 +96,16 @@ def install(app: Flask, service_name: str, db) -> None:
     def prometheus_metrics():
         body, content_type = metrics.render()
         return Response(body, content_type=content_type)
+
+    @app.post("/debug/crash")
+    def debug_crash():
+        if not chaos_enabled():
+            return jsonify({"message": "Chaos endpoints are off (CHAOS_ENABLED is not 1)"}), 403
+        # Exit just after the response is sent, like a crashed replica. No deregistration on
+        # purpose: the registry has to notice the missing heartbeats by itself.
+        threading.Timer(0.3, os._exit, [1]).start()
+        return jsonify({"stopping": this_instance})
+
+    public_url = os.environ.get("SERVICE_PUBLIC_URL")
+    if public_url:
+        DISCOVERY.register(service_name, this_instance, public_url)

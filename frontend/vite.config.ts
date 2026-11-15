@@ -7,5 +7,7 @@ export default defineConfig({
   server: {
     port: Number(process.env.FRONTEND_PORT) || 5273,
     host: true,
+    // The Contract Testing page imports the committed contracts from ../contracts/pacts.
+    fs: { allow: [".."] },
   },
 });

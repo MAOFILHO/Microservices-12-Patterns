@@ -4,10 +4,11 @@ A small Contoso e-commerce system that shows **12 microservices patterns working
 Each pattern gets its own page with an explanation, when *not* to use it, and a live demo you
 can click.
 
-> **Status: M1, foundation.** 4 of 12 patterns are live: Database per Service, Bounded Context,
-> API Gateway and Observability. The foundation is copied from
+> **Status: M2, resilience and independence.** 8 of 12 patterns are live: M1's Database per
+> Service, Bounded Context, API Gateway and Observability, plus M2's Circuit Breaker, Stateless
+> Services, Contract Testing and Service Discovery. The foundation is copied from
 > [Azure-Ecommerce-Monolith-Microservices-Migration](https://github.com/MAOFILHO/Azure-Ecommerce-Monolith-Microservices-Migration).
-> The rest arrive in milestones M2 and M3. See [docs/PLAN.md](docs/PLAN.md).
+> The last 4 arrive in milestone M3. See [docs/PLAN.md](docs/PLAN.md).
 
 ## The 12 patterns
 
@@ -16,36 +17,41 @@ can click.
 | 1 | Database per Service | Gives each service its own database | **Live (M1)** |
 | 2 | Bounded Context | Splits one large domain into clear business domains | **Live (M1)** |
 | 3 | CI-CD Pipeline | Builds, tests and deploys every service automatically | M3 |
-| 4 | Circuit Breaker | Stops calls to a failing service to prevent more failures | M2 |
+| 4 | Circuit Breaker | Stops calls to a failing service to prevent more failures | **Live (M2)** |
 | 5 | API Gateway | Routes client requests to the right service | **Live (M1)** |
 | 6 | Observability | Collects logs, metrics and traces from every service | **Live (M1)** |
 | 7 | Event-Driven Architecture | Services communicate by publishing and consuming events | M3 |
 | 8 | Saga Pattern | Coordinates distributed transactions and rolls back failures safely | M3 |
 | 9 | Containerization | Packages each service with all its dependencies | M3 |
-| 10 | Stateless Services | Stores session data outside the service | M2 |
-| 11 | Contract Testing | Checks that APIs stay compatible across services | M2 |
-| 12 | Service Discovery | Finds service instances automatically at runtime | M2 |
+| 10 | Stateless Services | Stores session data outside the service | **Live (M2)** |
+| 11 | Contract Testing | Checks that APIs stay compatible across services | **Live (M2)** |
+| 12 | Service Discovery | Finds service instances automatically at runtime | **Live (M2)** |
 
 ## Architecture today
 
 ```
-Browser → API gateway ──┬──► user       → user_db
-  (request IDs,         ├──► catalog    → catalog_db
-   tracing, metrics,    ├──► order      → order_db ──HTTP──► user (validates the caller)
-   aggregation)         ├──► payment    → payment_db
-                        └──► inventory  → inventory_db
+Browser → API gateway ──┬──► user        → user_db      (signs login tokens)
+  (checks tokens,       ├──► catalog     → catalog_db
+   request IDs,         ├──► order ×2    → order_db ──► catalog (prices)
+   tracing, metrics,    │                            └─► payment, behind a circuit breaker
+   aggregation,         ├──► payment     → payment_db
+   failover)            └──► inventory   → inventory_db
+
+Every service heartbeats into the registry (:8500); callers look each other up there.
 ```
 
 - **5 Flask services** (`services/`), each with its own database: SQLite locally, one logical
-  MySQL database each in Azure.
+  MySQL database each in Azure. Locally the order service runs as 2 replicas.
 - **FastAPI gateway** (`gateway/`): the only thing the browser talks to. Routes `/api/shop/*` to
   the owning service, adds request IDs, aggregates `/api/order-summary`, serves the demo endpoints.
 - **`shop_common`** (`shared/`): OpenTelemetry tracing, JSON logs with trace IDs, Prometheus
-  metrics, and the `/health/db`, `/debug/spans`, `/metrics` endpoints every service exposes.
+  metrics, the `/health/db`, `/debug/spans`, `/metrics` endpoints, token checks and the discovery client.
+- **Service registry** (`registry/`): about 90 lines of FastAPI. Local only; Azure uses Container Apps DNS.
+- **Contracts** (`contracts/pacts/`): the Pact files the order service needs payment and catalog to honour.
 - **React + TypeScript** frontend (`frontend/`) with a page per pattern.
 
-Still to come: service registry, JWT and replicas, circuit breaker, Pact contract tests (M2);
-Redis Streams events with an outbox, checkout saga, hardened containers, deploy pipeline (M3).
+Still to come (M3): Redis Streams events with an outbox, checkout saga, hardened containers,
+deploy pipeline, and a real Azure run.
 
 ## The live demos
 
@@ -73,12 +79,39 @@ database queries, drawn as a waterfall. Metrics per service come from each `/met
 
 <img width="100%" alt="Observability demo: a trace waterfall across gateway, user, order, catalog and inventory" src="docs/screenshots/p06-observability.jpg" />
 
+### 4. Circuit Breaker
+Switch payment to slow and send 10 calls. Each order replica's breaker opens after 3 failures.
+A real failure took 2,215 ms; a call the open breaker stopped took 0 ms. After 15 s with payment
+healthy again, both breakers close.
+
+<img width="100%" alt="Circuit Breaker demo: both order replicas' breakers open; failed calls take 2.2 s, short-circuited calls 0 ms" src="docs/screenshots/p04-circuit-breaker.jpg" />
+
+### 10. Stateless Services
+Your login is a signed token, readable by anyone, signed only by the user service. Ask for your
+cart 6 times: both order replicas answer. Stop one: all 6 calls still succeed, same cart, still
+logged in.
+
+<img width="100%" alt="Stateless Services demo: one order replica stopped, all 6 cart requests still succeed on the other" src="docs/screenshots/p10-stateless-services.jpg" />
+
+### 11. Contract Testing
+The order service's contracts with payment and catalog, read from the committed Pact files, and
+the real CI output when payment renames one field the order service relies on.
+
+<img width="100%" alt="Contract Testing demo: the contract break output and how CI runs consumer and provider checks" src="docs/screenshots/p11-contract-testing.jpg" />
+
+### 12. Service Discovery
+The live registry. Stop an instance: its heartbeat stops, the registry expires it after 10 s, and
+`make run` restarts it 20 s later, when it registers again.
+
+<img width="100%" alt="Service Discovery demo: registry table and an expired then re-registered order replica" src="docs/screenshots/p12-service-discovery.jpg" />
+
 ## Run locally (no Docker)
 
 ```bash
 make setup    # one venv per service + gateway, shop_common, frontend packages
-make run      # frontend http://127.0.0.1:5273, gateway http://127.0.0.1:8100
+make run      # frontend http://127.0.0.1:5273, gateway http://127.0.0.1:8100, registry :8500
 make test     # unit tests, each suite in its own venv
+make contracts  # Pact: order writes its contracts, payment and catalog verify them
 make smoke    # end-to-end checks against the running stack
 ```
 
@@ -89,4 +122,5 @@ collector. Without it, traces stay in each process's memory and the Observabilit
 
 Azure Container Apps (one app per service plus the gateway, all scale-to-zero) + MySQL Flexible
 Server, provisioned with `make provision` and removed with `make teardown`. About $0.21 for an
-8-hour session. See [cost_estimate.md](cost_estimate.md). Nothing from M1 has been deployed yet.
+8-hour session. See [cost_estimate.md](cost_estimate.md). Nothing from M1 or M2 has been deployed
+yet. In Azure, discovery uses Container Apps DNS (no registry), and the demo switches stay off.

@@ -1,5 +1,5 @@
 import { useEffect, useState } from "react";
-import { ServiceMetrics, Span, patternsApi, savedApiKey } from "../../api/gatewayClient";
+import { ServiceMetrics, Span, patternsApi, savedToken } from "../../api/gatewayClient";
 
 function Waterfall({ spans }: { spans: Span[] }) {
   if (spans.length === 0) return <p className="muted">No spans found for this trace yet.</p>;
@@ -39,7 +39,7 @@ export default function ObservabilityDemo() {
   const [metrics, setMetrics] = useState<ServiceMetrics[]>([]);
   const [error, setError] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
-  const apiKey = savedApiKey();
+  const token = savedToken();
 
   function loadMetrics() {
     patternsApi
@@ -55,7 +55,7 @@ export default function ObservabilityDemo() {
     setError(null);
     try {
       // Signed in: the 4-service order summary. Otherwise: the 2-service bounded-context view.
-      const result = apiKey ? await patternsApi.orderSummary(apiKey) : await patternsApi.boundedContext(1);
+      const result = token ? await patternsApi.orderSummary(token) : await patternsApi.boundedContext(1);
       setTraceId(result.traceId);
       setRequestId(result.requestId);
       if (result.traceId) {
@@ -75,7 +75,7 @@ export default function ObservabilityDemo() {
       <div>
         <h3>Traces: follow one click through every service</h3>
         <p className="muted">
-          {apiKey
+          {token
             ? "Sends GET /api/order-summary (gateway, user, order, catalog, inventory), then collects that trace's spans from every process."
             : "Sends GET /api/patterns/bounded-context/1 (gateway, catalog, inventory). Log in on the Shop page to trace the bigger 4-service order summary."}
         </p>

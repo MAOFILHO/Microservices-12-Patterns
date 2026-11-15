@@ -5,7 +5,13 @@ async function request<T>(path: string, options: RequestInit = {}): Promise<T> {
   const response = await fetch(`${GATEWAY_BASE_URL}${path}`, options);
   if (!response.ok) {
     const body = await response.text();
-    throw new Error(`${response.status} ${response.statusText}: ${body}`);
+    let message = body;
+    try {
+      message = (JSON.parse(body) as { message?: string }).message ?? body;
+    } catch {
+      // not JSON: keep the raw text
+    }
+    throw new Error(`${response.status}: ${message}`);
   }
   return response.json() as Promise<T>;
 }
@@ -26,8 +32,9 @@ function toForm(fields: Record<string, string | number>): URLSearchParams {
   return form;
 }
 
-function authHeaders(apiKey: string): HeadersInit {
-  return { Authorization: `Basic ${apiKey}` };
+// Pattern 10: the signed login token travels with every request; no server keeps a session.
+function authHeaders(token: string): HeadersInit {
+  return { Authorization: `Bearer ${token}` };
 }
 
 export interface Product {
@@ -66,27 +73,27 @@ export const shopApi = {
     }),
 
   login: (username: string, password: string) =>
-    request<{ api_key: string }>(`/api/shop/user/login`, {
+    request<{ token: string; expires_in: number }>(`/api/shop/user/login`, {
       method: "POST",
       body: toForm({ username, password }),
     }),
 
-  addToCart: (apiKey: string, productId: number, qty: number) =>
+  addToCart: (token: string, productId: number, qty: number) =>
     request<{ result: Order }>(`/api/shop/order/add-item`, {
       method: "POST",
-      headers: authHeaders(apiKey),
+      headers: authHeaders(token),
       body: toForm({ product_id: productId, qty }),
     }),
 
-  getCart: (apiKey: string) =>
+  getCart: (token: string) =>
     request<{ result?: Order; message?: string }>(`/api/shop/order`, {
-      headers: authHeaders(apiKey),
+      headers: authHeaders(token),
     }),
 
-  checkout: (apiKey: string) =>
+  checkout: (token: string) =>
     request<{ result: Order }>(`/api/shop/order/checkout`, {
       method: "POST",
-      headers: authHeaders(apiKey),
+      headers: authHeaders(token),
     }),
 };
 
@@ -155,17 +162,77 @@ export const patternsApi = {
   databases: () => request<{ services: ServiceDatabase[] }>("/api/patterns/databases"),
   isolationTest: (table: string) => request<IsolationResult>(`/api/patterns/isolation-test?table=${encodeURIComponent(table)}`),
   boundedContext: (productId: number) => requestWithIds<BoundedContextView>(`/api/patterns/bounded-context/${productId}`),
-  orderSummary: (apiKey: string) => requestWithIds<OrderSummary>("/api/order-summary", { headers: authHeaders(apiKey) }),
+  orderSummary: (token: string) => requestWithIds<OrderSummary>("/api/order-summary", { headers: authHeaders(token) }),
   trace: (traceId: string) => request<{ trace_id: string; spans: Span[] }>(`/api/observability/trace/${traceId}`),
   metrics: () => request<{ services: ServiceMetrics[] }>("/api/observability/metrics"),
 };
 
 /** The Shop page stores the signed-in user here; demos that need a login reuse it. */
-export function savedApiKey(): string | null {
+export function savedToken(): string | null {
   try {
     const raw = localStorage.getItem("shop_auth");
-    return raw ? (JSON.parse(raw) as { apiKey: string }).apiKey : null;
+    return raw ? ((JSON.parse(raw) as { token?: string }).token ?? null) : null;
   } catch {
     return null;
   }
 }
+
+// --- M2 demo endpoints (patterns 4, 10, 12) ------------------------------------------------------
+
+export interface RegistryInstance {
+  instance_id: string;
+  url: string;
+  last_heartbeat_s: number | null;
+  up_for_s: number | null;
+}
+
+export interface RegistryView {
+  mode: "registry" | "static" | "registry-unreachable";
+  ttl_seconds: number | null;
+  services: Record<string, RegistryInstance[]>;
+  events: { at: number; event: string; service: string; instance_id: string }[];
+}
+
+export interface BreakerState {
+  instance: string | null;
+  state: "closed" | "open" | "half-open" | "unreachable";
+  failures_in_a_row?: number;
+  fail_max?: number;
+  reset_seconds?: number;
+  retry_in_seconds?: number | null;
+}
+
+export interface BreakerCall {
+  outcome: "ok" | "failed" | "short-circuited" | string;
+  ms?: number;
+  total_ms?: number;
+  instance: string | null;
+  breaker?: BreakerState;
+}
+
+/** GET with the token, returning the status and which replica answered (X-Instance-Id). */
+async function getWithInstance<T>(path: string, token: string): Promise<{ status: number; instance: string | null; body: T }> {
+  const response = await fetch(`${GATEWAY_BASE_URL}${path}`, { headers: authHeaders(token) });
+  return { status: response.status, instance: response.headers.get("X-Instance-Id"), body: (await response.json()) as T };
+}
+
+async function getAny<T>(path: string, options: RequestInit = {}): Promise<{ status: number; body: T }> {
+  const response = await fetch(`${GATEWAY_BASE_URL}${path}`, options);
+  return { status: response.status, body: (await response.json()) as T };
+}
+
+export const resilienceApi = {
+  registry: () => request<RegistryView>("/api/patterns/registry"),
+  stopReplica: (instanceId: string) =>
+    getAny<{ stopping?: string; message?: string }>(`/api/patterns/replicas/${encodeURIComponent(instanceId)}/stop`, { method: "POST" }),
+  cartFromAnyReplica: (token: string) => getWithInstance<{ result?: Order; message?: string }>("/api/shop/order", token),
+  breakerCall: () => getAny<BreakerCall>("/api/patterns/breaker/call"),
+  breakerState: () =>
+    request<{ breakers: BreakerState[]; payment: { mode: string; enabled?: boolean }; chaos_enabled: boolean }>("/api/patterns/breaker/state"),
+  setPaymentMode: (mode: string) =>
+    getAny<{ mode?: string; message?: string }>("/api/patterns/breaker/payment-mode", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ mode }),
+    }),
+};
