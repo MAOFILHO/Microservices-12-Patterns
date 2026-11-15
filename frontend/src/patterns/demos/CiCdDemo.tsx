@@ -1,10 +1,17 @@
 import { useEffect, useState } from "react";
-import { DeliveryView, WorkflowRun, deliveryApi } from "../../api/gatewayClient";
+import { DeliveryStatus, DeliveryView, WorkflowRun, deliveryApi } from "../../api/gatewayClient";
 
-const PILL: Record<string, string> = { current: "done", behind: "failed", local: "pending", unknown: "pending" };
-const LABEL: Record<string, string> = {
+const PILL: Record<DeliveryStatus, string> = {
+  current: "done",
+  unchanged: "done",
+  behind: "failed",
+  local: "pending",
+  unknown: "pending",
+};
+const LABEL: Record<DeliveryStatus, string> = {
   current: "on latest main",
-  behind: "behind main",
+  unchanged: "no changes since its build",
+  behind: "behind main: Deploy rebuilds it",
   local: "local build",
   unknown: "unknown",
 };
@@ -37,11 +44,17 @@ export default function CiCdDemo() {
   const [error, setError] = useState<string | null>(null);
 
   useEffect(() => {
+    let active = true;
     deliveryApi
       .view()
-      .then(setView)
-      .catch((err) => setError(String(err)));
+      .then((v) => active && setView(v))
+      .catch((err) => active && setError(String(err)));
+    return () => {
+      active = false;
+    };
   }, []);
+
+  if (!view && !error) return <p className="muted">Reading the running services and GitHub…</p>;
 
   const behind = view?.services.filter((s) => s.status === "behind").length ?? 0;
 
@@ -59,7 +72,7 @@ export default function CiCdDemo() {
           ) : (
             "unknown (GitHub unreachable)"
           )}
-          . {behind > 0 ? `${behind} service(s) run an older build: press Deploy to roll them forward.` : ""}
+          . {behind > 0 ? `${behind} service(s) are behind main: the Deploy button rebuilds exactly those.` : ""}
         </p>
         <div className="table-scroll">
           <table className="data-table">

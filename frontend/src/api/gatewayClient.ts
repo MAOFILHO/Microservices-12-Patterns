@@ -323,10 +323,13 @@ export interface WorkflowRun {
   created_at: string;
 }
 
+/** current: built from main. behind: main changed its code. unchanged: older build, nothing of it changed. */
+export type DeliveryStatus = "current" | "behind" | "unchanged" | "local" | "unknown";
+
 export interface DeliveryView {
   repo: string;
   main: { sha: string; short: string; url: string } | null;
-  services: { service: string; instance: string; git_sha: string | null; status: "current" | "behind" | "local" | "unknown" }[];
+  services: { service: string; instance: string; git_sha: string | null; status: DeliveryStatus }[];
   runs: { ci: WorkflowRun | null; deploy: WorkflowRun | null };
 }
 

@@ -58,7 +58,7 @@ history, monolith dropped). The full agreed plan is in [`docs/PLAN.md`](docs/PLA
 answers `/debug/runtime` with the new commit. All workflow actions are pinned to commit SHAs. "CI ok"
 is the one job to require in branch protection. The CI-CD page reads `/api/patterns/delivery`
 (gateway `routers/delivery.py`): running commits vs main and the latest runs, from GitHub's public
-API, cached 60 s (`GITHUB_REPO` overrides the repo).
+API, reused 5 min then revalidated by ETag (304s are free), last good answer kept on errors; "behind" uses the Deploy rule (`GITHUB_REPO` overrides the repo).
 - Azure (M3b): provision keeps `image_tag`, `image_sizes` and `jwt_key_b64` in infra/.state.json so
   `--skip-build` and re-runs neither break image pulls nor log users out. It tags images with the 12-char commit, imports `redis:7.4-alpine` into ACR,
   generates the JWT key (`openssl`, passed base64 as a secure param, user reads `JWT_PRIVATE_KEY_B64`),

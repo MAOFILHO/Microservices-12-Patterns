@@ -64,13 +64,13 @@ export const PATTERNS: PatternInfo[] = [
     milestone: "M3",
     live: true,
     problem:
-      "With 6 services, building and testing everything on every change is slow, and deploying by hand from a laptop is error-prone: nobody knows which version runs where, and one tired evening ships the wrong one.",
+      "With 5 services and a gateway, building and testing everything on every change is slow, and deploying by hand from a laptop is error-prone: nobody knows which version runs where, and one tired evening ships the wrong one.",
     inThisProject: [
       "Every pull request first plans its jobs from the changed files and the service table: a change to the payment service runs payment's tests and image only.",
       "Shared code, CI itself or the service table run everything. Changing the contract consumer also runs every provider's contract check.",
       "Every image is built for linux/amd64 in CI, started, health-checked, and rejected if it runs as root.",
       "Deploy is a manual workflow on main. It signs in to Azure with OIDC (no stored password), rebuilds only the services that changed since the commit they run, and waits until each answers with the new commit.",
-      "Every running service reports the commit it was built from, so this page can show what is live and what is behind.",
+      "Every running service reports the commit it was built from. This page marks a service behind main only when main changed its code since that build, the same rule Deploy uses.",
     ],
     whenNotToUse: [
       "Path-based skipping trusts the folder layout. Code that one service imports from another folder must be declared, or a change can skip a test it should run.",
