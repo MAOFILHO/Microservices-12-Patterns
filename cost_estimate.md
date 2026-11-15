@@ -18,11 +18,15 @@ locally (plain Python/Node processes, SQLite, zero Docker, zero Azure) at **$0 c
 | Azure Database for MySQL Flexible Server | **Burstable B1ms** (1 vCore/2GiB), single server hosting 4 logical databases (monolith_db, user_db, product_db, order_db) provisioned upfront | Cheapest managed MySQL tier (no free tier exists for managed MySQL); sharing one server across 4 logical DBs avoids paying for 4 separate servers (documented tradeoff: less isolation than 4 servers, acceptable for a demo) | $0.019 (compute) | $0.15 | **~$14.50** (compute + 20GB storage) | SQLite (already used for local dev; not used in Azure to keep the "real MySQL in prod" story) |
 | Azure Static Web Apps | **Free tier** | 100GB bandwidth/mo, 1GB storage, free SSL | $0 | $0 | **$0** | N/A — already free |
 | Application Insights / Log Analytics | Pay-as-you-go, workspace-based | First 5GB/day ingestion free; demo-scale traffic stays inside this | $0 | $0 | **~$0** | N/A |
+| Redis Container App (event bus, M3a/M3b) | **Consumption plan, 0.25 vCPU / 0.5 GiB, exactly 1 replica** (never scales to zero: undelivered events live in its memory) | Azure Cache for Redis starts near $16/mo; a Container App inside the same environment, internal TCP only, costs nothing within the monthly free grant | ~$0 (free grant) | **$0** (7,200 vCPU-s and 14,400 GiB-s, inside the free grant) | **~$4 idle to ~$14 busy** (after the 180,000 vCPU-s / 360,000 GiB-s free grant; consumption rates of about $0.000003 idle or $0.000024 active per vCPU-s and $0.000003 per GiB-s, re-check before provisioning) | None cheaper for an always-on bus; `make pause` scales it to 0 |
 | Cost Management budget alert | n/a | Free, created by `provision.py` before any billable resource | $0 | $0 | $0 | — |
 | Contributor role assignment (bff's managed identity, scoped to this one resource group only) | n/a | Free — control-plane only, lets the bff create the microservices' Container Apps itself during a live migration | $0 | $0 | $0 | — |
 
 **Total estimated cost for an 8-hour test session: ~$0.21**
-**Total estimated cost if resources are accidentally left running for 30 days: ~$19.51**
+**Total estimated cost if resources are accidentally left running for 30 days: ~$19.51 before M3b,
+~$24 to ~$34 with the always-on Redis (M3b).** The upper end is above the $25/month budget alert,
+which then fires: that is the alert doing its job. Run `make teardown` (or at least `make pause`)
+after every session.
 
 These figures are **unchanged** from the original estimate — the only thing that changed is *when*
 each Container App gets created (monolith + bff at `make provision`; user-/product-/order-service

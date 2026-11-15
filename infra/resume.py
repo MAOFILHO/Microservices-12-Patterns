@@ -16,6 +16,14 @@ REPO_ROOT = Path(__file__).resolve().parents[1]
 STATE_FILE = REPO_ROOT / "infra" / ".state.json"
 
 MAX_REPLICAS_DEFAULT = "3"
+# Apps that must never scale to zero: Redis keeps undelivered events in memory (pattern 7).
+ALWAYS_ON = {"redis"}
+
+
+def replica_args(app_name: str) -> list[str]:
+    if app_name in ALWAYS_ON:
+        return ["--min-replicas", "1", "--max-replicas", "1"]
+    return ["--min-replicas", "0", "--max-replicas", MAX_REPLICAS_DEFAULT]
 
 
 def _wait_for_mysql_ready(mysql_name: str, resource_group: str, timeout: float = 180.0) -> bool:
@@ -59,10 +67,10 @@ def main() -> int:
 
     container_apps = state.get("container_apps", {})
     for app_name in container_apps.values():
-        print(f"=== Restoring Container App '{app_name}' scale range (min=0, max={MAX_REPLICAS_DEFAULT}) ===")
+        print(f"=== Restoring Container App '{app_name}' scale range ({' '.join(replica_args(app_name))}) ===")
         subprocess.run(
             ["az", "containerapp", "update", "--name", app_name, "--resource-group", resource_group,
-             "--min-replicas", "0", "--max-replicas", MAX_REPLICAS_DEFAULT, "--output", "json"],
+             *replica_args(app_name), "--output", "json"],
         )
 
     print("\nResumed. Give the services a few seconds to cold-start on first request.")

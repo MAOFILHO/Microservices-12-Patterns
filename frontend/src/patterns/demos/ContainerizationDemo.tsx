@@ -50,6 +50,7 @@ export default function ContainerizationDemo() {
                 <th>Platform</th>
                 <th>Python</th>
                 <th>Build</th>
+                <th>Image</th>
               </tr>
             </thead>
             <tbody>
@@ -60,7 +61,7 @@ export default function ContainerizationDemo() {
                     {p.instance}
                   </td>
                   {p.unreachable ? (
-                    <td colSpan={5} style={{ color: "var(--contoso-danger)" }}>
+                    <td colSpan={6} style={{ color: "var(--contoso-danger)" }}>
                       unreachable
                     </td>
                   ) : (
@@ -76,6 +77,7 @@ export default function ContainerizationDemo() {
                       <td>
                         <code>{p.git_sha === "local" ? "local" : p.git_sha?.slice(0, 7)}</code>
                       </td>
+                      <td>{p.image_size_mb ? `${p.image_size_mb} MB` : "–"}</td>
                     </>
                   )}
                 </tr>
@@ -100,6 +102,10 @@ export default function ContainerizationDemo() {
             <li>Starts each image and waits for <code>/health</code> to answer.</li>
             <li>Fails if the process inside runs as root (uid 0).</li>
             <li>Writes each image's size to the run summary.</li>
+            <li>
+              The manual Deploy workflow records each image's compressed size in the app, shown in the Image column in
+              Azure.
+            </li>
           </ol>
           <p className="muted" style={{ fontSize: "0.85rem" }}>
             A <code>.dockerignore</code> in each service keeps local virtualenvs, databases and keys out of the build.

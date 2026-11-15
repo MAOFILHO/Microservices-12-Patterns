@@ -18,6 +18,8 @@ class Service:
     port: int          # default local port
     port_env: str      # env var the process reads its port from
     kind: str          # "flask" or "fastapi"
+    azure: bool = True   # deployed as a Container App (the registry is local only)
+    shared: bool = True  # installs shared/ (shop_common); the registry does not
 
     @property
     def local_port(self) -> int:
@@ -36,9 +38,14 @@ FLASK_SERVICES = [
     Service("inventory", REPO_ROOT / "services" / "inventory", 5105, "INVENTORY_SERVICE_PORT", "flask"),
 ]
 GATEWAY = Service("gateway", REPO_ROOT / "gateway", 8100, "GATEWAY_PORT", "fastapi")
-REGISTRY = Service("registry", REPO_ROOT / "registry", 8500, "REGISTRY_PORT", "fastapi")
+REGISTRY = Service("registry", REPO_ROOT / "registry", 8500, "REGISTRY_PORT", "fastapi", azure=False, shared=False)
 
 PYTHON_SERVICES = FLASK_SERVICES + [GATEWAY, REGISTRY]
+AZURE_SERVICES = [s for s in PYTHON_SERVICES if s.azure]
+
+# The one Azure resource group (provision, teardown, the deploy identity and the Deploy workflow).
+# Must never match the parent project's rg-flask-monolith-microservices: teardown deletes it whole.
+AZURE_RESOURCE_GROUP = "rg-microservices-12-patterns"
 
 # The event bus (patterns 7 and 8): a Homebrew redis-server, no Docker. Offset from Redis' default
 # 6379 so a Redis the owner already runs is never touched.
