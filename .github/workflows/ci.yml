@@ -1,0 +1,80 @@
+name: CI
+
+on:
+  push:
+    branches: ["main"]
+  pull_request:
+    branches: ["main"]
+  workflow_dispatch:
+
+jobs:
+  unit-tests:
+    name: Unit tests (${{ matrix.suite }})
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      # Each suite gets its own install: monolith/app, bff/app and every
+      # service's config.py share top-level module names, so they cannot
+      # run in one interpreter (see CLAUDE.md, "collision note").
+      matrix:
+        include:
+          - suite: repo-root
+            requirements: requirements-dev.txt
+            tests: tests/unit
+          - suite: bff
+            requirements: bff/requirements.txt
+            tests: bff/tests
+          - suite: user-service
+            requirements: microservices/user-service/requirements.txt
+            tests: microservices/user-service/tests
+          - suite: product-service
+            requirements: microservices/product-service/requirements.txt
+            tests: microservices/product-service/tests
+          - suite: order-service
+            requirements: microservices/order-service/requirements.txt
+            tests: microservices/order-service/tests
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+          cache: "pip"
+          cache-dependency-path: ${{ matrix.requirements }}
+
+      - name: Install dependencies
+        run: pip install -r ${{ matrix.requirements }} pytest==8.3.4 pytest-asyncio==0.25.0
+
+      - name: Run tests
+        run: python -m pytest ${{ matrix.tests }} -v
+
+  frontend:
+    name: Frontend (build)
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: frontend
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "20"
+          cache: "npm"
+          cache-dependency-path: frontend/package-lock.json
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Type-check and build
+        run: npm run build
+
+  bicep:
+    name: Bicep (build)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      # Compiles the templates only; nothing is deployed and no login is needed.
+      - name: Build main.bicep
+        run: az bicep build --file infra/bicep/main.bicep --stdout > /dev/null
