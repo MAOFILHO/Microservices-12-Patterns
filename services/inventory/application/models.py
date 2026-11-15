@@ -21,3 +21,54 @@ class StockItem(db.Model):
             "reserved": self.reserved,
             "available": self.available,
         }
+
+
+def _utcnow():
+    from datetime import datetime, timezone
+
+    return datetime.now(timezone.utc)
+
+
+class Reservation(db.Model):
+    """Stock held for one checkout attempt (pattern 8). Keyed by the order service's saga id, so a
+    retried request or a redelivered event finds the same row instead of holding stock twice."""
+
+    __tablename__ = "reservation"
+
+    id = db.Column(db.String(36), primary_key=True)  # the saga id
+    order_id = db.Column(db.Integer, nullable=False, index=True)
+    items = db.Column(db.JSON, nullable=False)  # [{"product_id": 1, "quantity": 2}]
+    status = db.Column(db.String(10), nullable=False)  # RESERVED -> SOLD | RELEASED
+    created_at = db.Column(db.DateTime, default=_utcnow)
+    updated_at = db.Column(db.DateTime, default=_utcnow, onupdate=_utcnow)
+
+    def to_json(self):
+        return {
+            "reservation_id": self.id,
+            "order_id": self.order_id,
+            "items": self.items,
+            "status": self.status,
+            "updated_at": self.updated_at.isoformat() if self.updated_at else None,
+        }
+
+
+class ConsumedEvent(db.Model):
+    """Every event inventory acted on (pattern 7). Also the dedupe record: an event id seen before
+    is skipped, which makes handling idempotent under at-least-once delivery."""
+
+    __tablename__ = "consumed_event"
+
+    event_id = db.Column(db.String(36), primary_key=True)
+    type = db.Column(db.String(40), nullable=False)
+    reservation_id = db.Column(db.String(36), nullable=True)
+    outcome = db.Column(db.String(120), nullable=False)
+    handled_at = db.Column(db.DateTime, default=_utcnow)
+
+    def to_json(self):
+        return {
+            "event_id": self.event_id,
+            "type": self.type,
+            "reservation_id": self.reservation_id,
+            "outcome": self.outcome,
+            "handled_at": self.handled_at.isoformat() if self.handled_at else None,
+        }

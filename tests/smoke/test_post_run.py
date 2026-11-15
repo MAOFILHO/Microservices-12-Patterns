@@ -35,13 +35,17 @@ def _checkout_flow(user_url: str, catalog_url: str, order_url: str) -> None:
     product_id = r.json()["product"]["id"]
 
     headers = {"Authorization": f"Bearer {login_token}"}
-    r = httpx.post(f"{order_url}/order/add-item", data={"product_id": product_id, "qty": 2}, headers=headers)
+    # Buy a seeded product: a product created a moment ago has no stock record in inventory, so the
+    # saga's reserve step would (correctly) refuse it.
+    assert product_id > 0
+    httpx.post(f"{order_url}/inventory/1/restock", json={"quantity": 10})
+    r = httpx.post(f"{order_url}/order/add-item", data={"product_id": 1, "qty": 2}, headers=headers)
     assert r.status_code == 200, r.text  # order verifies the token itself, no call to user
 
     r = httpx.post(f"{order_url}/order/checkout", headers=headers)
     assert r.status_code == 200, r.text
     assert r.json()["result"]["is_open"] is False
-    assert r.json()["payment"]["amount_cents"] == 3000  # priced by catalog, charged by payment
+    assert r.json()["payment"]["amount_cents"] == 2 * 1299  # priced by catalog, charged by payment
 
 
 def test_services_full_flow_direct():
@@ -73,7 +77,7 @@ def test_each_service_owns_only_its_tables():
     services = {s["service"]: s for s in httpx.get(f"{GATEWAY_URL}/api/patterns/databases").json()["services"]}
     assert set(services) == set(URLS)
     assert services["catalog"]["tables"] == ["product"]
-    assert services["inventory"]["tables"] == ["stock_item"]
+    assert services["inventory"]["tables"] == ["consumed_event", "reservation", "stock_item"]
     assert "product" not in services["order"]["tables"]
 
 
@@ -101,6 +105,8 @@ def test_one_request_is_traced_across_services():
 # --- M2 pattern demos (patterns 10, 12, 4), through the gateway ----------------------------------
 
 def _login_with_cart() -> dict:
+    # Top up stock first, so repeated smoke runs never run product 1 out of stock.
+    httpx.post(f"{GATEWAY_URL}/api/shop/inventory/1/restock", json={"quantity": 10})
     tag = uuid.uuid4().hex[:8]
     shop = f"{GATEWAY_URL}/api/shop"
     httpx.post(f"{shop}/user/create", data={"username": f"m2{tag}", "email": f"m2{tag}@example.com", "password": "secret123"})
@@ -158,3 +164,68 @@ def test_breaker_opens_when_payment_fails_and_closes_after_it_heals():
     outcomes = {httpx.get(f"{api}/call").json()["outcome"] for _ in range(2)}
     assert outcomes == {"ok"}
     assert {b["state"] for b in httpx.get(f"{api}/state").json()["breakers"]} == {"closed"}
+
+
+# --- M3a pattern demos (patterns 8, 7, 9), through the gateway ----------------------------------
+
+def _stock(product_id: int) -> dict:
+    return next(s for s in httpx.get(f"{GATEWAY_URL}/api/shop/inventory").json()["results"] if s["product_id"] == product_id)
+
+
+def _wait_for(condition, seconds: float = 8.0) -> bool:
+    import time
+
+    deadline = time.monotonic() + seconds
+    while time.monotonic() < deadline:
+        if condition():
+            return True
+        time.sleep(0.5)
+    return False
+
+
+def test_saga_sale_holds_then_sells_through_the_event_bus():
+    _require_stack()
+    headers = _login_with_cart()  # 3 units of product 1
+    before = _stock(1)
+    r = httpx.post(f"{GATEWAY_URL}/api/shop/order/checkout", headers=headers, timeout=15)
+    assert r.status_code == 200, r.text
+    steps = httpx.get(f"{GATEWAY_URL}/api/shop/order/sagas", headers=headers).json()["results"][0]["steps"]
+    assert [s["step"] for s in steps] == ["price", "reserve_stock", "charge_payment", "confirm"]
+    # Inventory sells the hold when it reads OrderConfirmed from Redis, a moment later.
+    assert _wait_for(lambda: _stock(1)["on_hand"] == before["on_hand"] - 3), _stock(1)
+    assert _stock(1)["reserved"] == before["reserved"]
+
+
+def test_declined_payment_is_compensated_and_stock_is_unchanged():
+    _require_stack()
+    headers = _login_with_cart()
+    before = _stock(1)
+    r = httpx.post(f"{GATEWAY_URL}/api/shop/order/checkout", json={"simulate_decline": True}, headers=headers, timeout=15)
+    assert r.status_code == 402, r.text
+    saga = httpx.get(f"{GATEWAY_URL}/api/shop/order/sagas", headers=headers).json()["results"][0]
+    assert saga["outcome"] == "compensated"
+    assert _stock(1) == before
+    assert httpx.get(f"{GATEWAY_URL}/api/shop/order", headers=headers).json()["result"]["is_open"] is True
+
+
+def test_events_wait_in_the_outbox_while_the_bus_is_down_then_drain():
+    _require_stack()
+    api = f"{GATEWAY_URL}/api/patterns/events"
+    assert httpx.post(f"{api}/bus", json={"connected": False}).json()["replicas_switched"] == 2
+    try:
+        headers = _login_with_cart()
+        before = _stock(1)
+        assert httpx.post(f"{GATEWAY_URL}/api/shop/order/checkout", headers=headers, timeout=15).status_code == 200
+        assert _wait_for(lambda: httpx.get(api).json()["outbox"]["pending"] >= 1)
+        assert _stock(1)["reserved"] == before["reserved"] + 3  # held, not yet sold
+    finally:
+        httpx.post(f"{api}/bus", json={"connected": True})
+    assert _wait_for(lambda: httpx.get(api).json()["outbox"]["pending"] == 0)
+    assert _wait_for(lambda: _stock(1)["on_hand"] == before["on_hand"] - 3)
+
+
+def test_every_process_reports_how_it_runs():
+    _require_stack()
+    processes = httpx.get(f"{GATEWAY_URL}/api/patterns/runtime").json()["processes"]
+    assert len(processes) == 7  # gateway + 5 services, order twice
+    assert all("uid" in p for p in processes)

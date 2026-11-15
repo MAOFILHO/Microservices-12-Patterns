@@ -129,3 +129,30 @@ Each milestone ends with: tests green, a click-through of its 4 pattern pages, s
 - Manual click-through of all 12 pattern pages in the browser pane, with a trace visible in `otel-desktop-viewer` for one order.
 - CI: a commit touching only `services/order/` runs only that matrix leg; the documented contract-break branch goes red.
 - M3 only: `make provision`, repeat the smoke flow against Azure, `make teardown`, `make verify` returns PASS.
+
+## M3 review (2026-11-15, after M1 and M2 shipped)
+
+What changed since this plan was written: checkout already prices from catalog and charges payment
+behind the circuit breaker (M2), checkout does not reserve stock yet, the registry is local only,
+the login signing key has no Azure home yet, and Redis is not installed locally yet.
+
+Decisions:
+1. **Saga style: orchestrated.** The order service calls inventory (reserve), then payment (charge),
+   then confirms. If payment fails or its breaker is open, it releases the stock and cancels the
+   order. Each step also publishes an event through the outbox for pattern 7. Chosen over a fully
+   event-driven saga: checkout answers in about 1 s and reuses the M2 breaker.
+2. **Event consumer: inventory finishes the sale.** The saga only reserves stock. Inventory reads
+   `OrderConfirmed` from Redis and moves the units from reserved to sold (on hand goes down).
+   "Stop the bus" leaves stock reserved with events waiting in the outbox, then it settles when Redis
+   is back. Chosen over a new notifications service: no 6th service, and the effect is visible stock.
+3. **Pipeline reach: GitHub deploys to Azure.** A manual "Deploy" workflow builds the changed images
+   and updates the Container Apps, logging in with OIDC (no Azure secret stored in GitHub). One Azure
+   identity for this repo, with access to `rg-microservices-12-patterns` only; `make provision`
+   re-grants it after each teardown. One-time setup done together with the owner.
+   Settled without a decision: Redis in Azure is one more Container App (1 replica while provisioned,
+   about $0.05 per 8-hour session; Azure Cache for Redis starts near $16/mo). `make provision` creates
+   the JWT signing key and stores it as a Container Apps secret.
+4. **Delivery: M3 splits into 2 PRs.** M3a = patterns 8, 7, 9 (saga, outbox events, inventory
+   consumer, hardened containers), all local, about 2 days. M3b = pattern 3 (path-filtered CI, OIDC
+   Deploy workflow, Azure identity setup) plus the one real Azure run, about 1 day, started only on the
+   owner's go-ahead after M3a merges.

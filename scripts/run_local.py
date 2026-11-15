@@ -5,10 +5,12 @@ No Docker Desktop, no containers. Starts the registry, every Flask service (orde
 the gateway, then the frontend, each gated on its /health endpoint. The list comes from
 scripts/service_table.py.
 
+Redis (the event bus, patterns 7 and 8) starts first, in memory only, if redis-server is installed.
 A service process that exits (for example one stopped from the Stateless or Service Discovery
 demo) is restarted after RESTART_DELAY_SECONDS, so the registry shows it leave and come back.
 """
 import os
+import shutil
 import signal
 import subprocess
 import sys
@@ -20,10 +22,12 @@ from pathlib import Path
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 from _procutil import ensure_port_free  # noqa: E402
 from service_table import (  # noqa: E402
-    FLASK_SERVICES, FRONTEND_DIR, FRONTEND_PORT, GATEWAY, REGISTRY, REPLICA_PORTS, Service,
+    FLASK_SERVICES, FRONTEND_DIR, FRONTEND_PORT, GATEWAY, REDIS_PORT, REDIS_URL, REGISTRY, REPLICA_PORTS,
+    REPO_ROOT, Service,
 )
 
 RESTART_DELAY_SECONDS = 20
+redis_running = False
 processes: list[subprocess.Popen] = []
 # pid -> how to start that process again (Flask services only)
 restartable: dict[int, tuple[str, object]] = {}
@@ -51,7 +55,36 @@ def _service_url_env() -> dict[str, str]:
     """Every process gets every service's static URL (the fallback), the registry, and the demo switches."""
     env = {f"{s.name.upper()}_SERVICE_BASE_URL": s.local_url for s in FLASK_SERVICES}
     env.update(REGISTRY_URL=REGISTRY.local_url, CHAOS_ENABLED="1")
+    if redis_running:
+        env["REDIS_URL"] = REDIS_URL
     return env
+
+
+def start_redis() -> bool:
+    """Starts a throwaway redis-server: in memory only, no files written, stopped with the stack."""
+    global redis_running
+    if shutil.which("redis-server") is None:
+        print("  ! redis-server not found (brew install redis). Events will wait in the outbox.")
+        return False
+    ensure_port_free(REDIS_PORT, "redis")
+    proc = subprocess.Popen(
+        ["redis-server", "--port", str(REDIS_PORT), "--bind", "127.0.0.1", "--save", "", "--appendonly", "no",
+         "--loglevel", "warning"],
+        cwd=str(REPO_ROOT),
+    )
+    processes.append(proc)
+    print(f"  redis starting on :{REDIS_PORT} (pid {proc.pid})…")
+    for _ in range(20):
+        try:
+            import socket
+
+            with socket.create_connection(("127.0.0.1", REDIS_PORT), timeout=0.5):
+                redis_running = True
+                return True
+        except OSError:
+            time.sleep(0.25)
+    print("  ! redis did not start. Events will wait in the outbox.")
+    return False
 
 
 def start_registry() -> subprocess.Popen:
@@ -125,6 +158,7 @@ def main() -> int:
     signal.signal(signal.SIGTERM, shutdown)
 
     print("=== Starting local stack (no Docker) ===")
+    start_redis()
     start_registry()
     if not _wait_for_health(f"{REGISTRY.local_url}/health"):
         print("registry failed to become healthy — aborting.")
@@ -152,6 +186,7 @@ Local stack is up:
   Frontend  http://127.0.0.1:{FRONTEND_PORT}
   Gateway   {GATEWAY.local_url}
   Registry  {REGISTRY.local_url}
+  Redis     {REDIS_URL if redis_running else "not running (events wait in the outbox)"}
 {services}
 
 Press Ctrl+C to stop everything.

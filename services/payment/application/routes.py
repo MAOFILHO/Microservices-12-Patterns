@@ -1,4 +1,5 @@
 import time
+from typing import Literal
 
 from flask import Blueprint, jsonify, make_response, request
 from pydantic import BaseModel, Field, ValidationError
@@ -19,6 +20,9 @@ _mode = {"value": "healthy"}
 class ChargeRequest(BaseModel):
     order_id: int = Field(gt=0)
     amount_cents: int = Field(gt=0)
+    # Pattern 8 demo: "decline" acts like a card the bank refuses. A decline is a normal business
+    # answer (200, status DECLINED), not a failure, so it never trips the order service's breaker.
+    simulate: Literal["approve", "decline"] = "approve"
 
 
 @payment_api.before_request
@@ -49,7 +53,8 @@ def charge():
         data = ChargeRequest.model_validate(raw)
     except ValidationError as exc:
         return make_response(jsonify({"message": "Invalid request", "errors": exc.errors(include_url=False)}), 400)
-    payment = Payment(order_id=data.order_id, amount_cents=data.amount_cents, status="APPROVED")
+    status = "DECLINED" if data.simulate == "decline" else "APPROVED"
+    payment = Payment(order_id=data.order_id, amount_cents=data.amount_cents, status=status)
     db.session.add(payment)
     db.session.commit()
     return jsonify({"result": payment.to_json()})

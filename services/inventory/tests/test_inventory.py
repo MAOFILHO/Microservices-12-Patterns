@@ -23,4 +23,4 @@ def test_get_stock_and_404(client):
 def test_health_db_reports_only_own_tables(client):
     body = client.get("/health/db").get_json()
     assert body["service"] == "inventory"
-    assert body["tables"] == ["stock_item"]
+    assert body["tables"] == ["consumed_event", "reservation", "stock_item"]

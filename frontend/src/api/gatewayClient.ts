@@ -236,3 +236,77 @@ export const resilienceApi = {
       body: JSON.stringify({ mode }),
     }),
 };
+
+// --- M3a demo endpoints (patterns 8, 7, 9) -------------------------------------------------------
+
+export interface SagaStep {
+  step: string;
+  status: "done" | "failed" | "compensated" | string;
+  detail: string | null;
+  at: string | null;
+}
+
+export interface SagaRun {
+  saga_id: string;
+  order_id: number;
+  outcome: "completed" | "compensated" | "failed";
+  steps: SagaStep[];
+}
+
+export interface OutboxRow {
+  event_id: string;
+  type: string;
+  payload: Record<string, unknown>;
+  created_at: string | null;
+  published_at: string | null;
+  attempts: number;
+  last_error: string | null;
+}
+
+export interface StockRow {
+  product_id: number;
+  on_hand: number;
+  reserved: number;
+  available: number;
+}
+
+export interface EventsView {
+  outbox: { pending: number; results: OutboxRow[]; bus_connected: boolean } | null;
+  consumed: { event_id: string; type: string; reservation_id: string | null; outcome: string; handled_at: string | null }[] | null;
+  stock: StockRow[] | null;
+  reservations: { reservation_id: string; order_id: number; status: string; items: { product_id: number; quantity: number }[] }[] | null;
+  bus_connected: boolean[] | null;
+  chaos_enabled: boolean;
+}
+
+export interface RuntimeInfo {
+  service: string;
+  instance: string;
+  uid?: number | null;
+  root?: boolean;
+  in_container?: boolean;
+  os?: string;
+  arch?: string;
+  python?: string;
+  git_sha?: string;
+  unreachable?: boolean;
+}
+
+export const asyncApi = {
+  checkout: (token: string, simulateDecline: boolean) =>
+    getAny<{ message?: string; saga_id?: string; failed_step?: string }>("/api/shop/order/checkout", {
+      method: "POST",
+      headers: { ...authHeaders(token), "Content-Type": "application/json" },
+      body: JSON.stringify({ simulate_decline: simulateDecline }),
+    }),
+  sagas: (token: string) => request<{ results: SagaRun[] }>("/api/shop/order/sagas", { headers: authHeaders(token) }),
+  addToCart: (token: string, productId: number, qty: number) => shopApi.addToCart(token, productId, qty),
+  events: () => request<EventsView>("/api/patterns/events"),
+  setBus: (connected: boolean) =>
+    getAny<{ bus_connected?: boolean; message?: string }>("/api/patterns/events/bus", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ connected }),
+    }),
+  runtime: () => request<{ processes: RuntimeInfo[] }>("/api/patterns/runtime"),
+};

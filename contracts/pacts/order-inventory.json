@@ -1,0 +1,199 @@
+{
+  "consumer": {
+    "name": "order"
+  },
+  "interactions": [
+    {
+      "description": "a release of a stock hold",
+      "pending": false,
+      "providerStates": [
+        {
+          "name": "a stock hold exists",
+          "params": {
+            "reservation_id": "3f0c1d2e-0000-4000-8000-000000000001"
+          }
+        }
+      ],
+      "request": {
+        "method": "POST",
+        "path": "/api/inventory/reservations/3f0c1d2e-0000-4000-8000-000000000001/release"
+      },
+      "response": {
+        "body": {
+          "content": {
+            "result": {
+              "reservation_id": "3f0c1d2e-0000-4000-8000-000000000001",
+              "status": "RELEASED"
+            }
+          },
+          "contentType": "application/json",
+          "encoded": false
+        },
+        "headers": {
+          "Content-Type": [
+            "application/json"
+          ]
+        },
+        "status": 200
+      },
+      "type": "Synchronous/HTTP"
+    },
+    {
+      "description": "a stock hold for a checkout",
+      "pending": false,
+      "providerStates": [
+        {
+          "name": "product 1 has stock"
+        }
+      ],
+      "request": {
+        "body": {
+          "content": {
+            "items": [
+              {
+                "product_id": 1,
+                "quantity": 2
+              }
+            ],
+            "order_id": 42,
+            "reservation_id": "3f0c1d2e-0000-4000-8000-000000000001"
+          },
+          "contentType": "application/json",
+          "encoded": false
+        },
+        "headers": {
+          "Content-Type": [
+            "application/json"
+          ]
+        },
+        "method": "POST",
+        "path": "/api/inventory/reservations"
+      },
+      "response": {
+        "body": {
+          "content": {
+            "result": {
+              "reservation_id": "3f0c1d2e-0000-4000-8000-000000000001",
+              "status": "RESERVED"
+            }
+          },
+          "contentType": "application/json",
+          "encoded": false
+        },
+        "headers": {
+          "Content-Type": [
+            "application/json"
+          ]
+        },
+        "matchingRules": {
+          "body": {
+            "$.result.reservation_id": {
+              "combine": "AND",
+              "matchers": [
+                {
+                  "match": "type"
+                }
+              ]
+            }
+          }
+        },
+        "status": 200
+      },
+      "type": "Synchronous/HTTP"
+    },
+    {
+      "description": "a stock hold that is more than inventory has",
+      "pending": false,
+      "providerStates": [
+        {
+          "name": "product 1 has stock"
+        }
+      ],
+      "request": {
+        "body": {
+          "content": {
+            "items": [
+              {
+                "product_id": 1,
+                "quantity": 100000
+              }
+            ],
+            "order_id": 43,
+            "reservation_id": "3f0c1d2e-0000-4000-8000-000000000002"
+          },
+          "contentType": "application/json",
+          "encoded": false
+        },
+        "headers": {
+          "Content-Type": [
+            "application/json"
+          ]
+        },
+        "method": "POST",
+        "path": "/api/inventory/reservations"
+      },
+      "response": {
+        "body": {
+          "content": {
+            "short": [
+              {
+                "available": 25,
+                "product_id": 1
+              }
+            ]
+          },
+          "contentType": "application/json",
+          "encoded": false
+        },
+        "headers": {
+          "Content-Type": [
+            "application/json"
+          ]
+        },
+        "matchingRules": {
+          "body": {
+            "$.short": {
+              "combine": "AND",
+              "matchers": [
+                {
+                  "match": "type",
+                  "min": 1
+                }
+              ]
+            },
+            "$.short[*].available": {
+              "combine": "AND",
+              "matchers": [
+                {
+                  "match": "integer"
+                }
+              ]
+            },
+            "$.short[*].product_id": {
+              "combine": "AND",
+              "matchers": [
+                {
+                  "match": "integer"
+                }
+              ]
+            }
+          }
+        },
+        "status": 409
+      },
+      "type": "Synchronous/HTTP"
+    }
+  ],
+  "metadata": {
+    "pactRust": {
+      "ffi": "0.5.12",
+      "models": "1.3.16"
+    },
+    "pactSpecification": {
+      "version": "4.0"
+    }
+  },
+  "provider": {
+    "name": "inventory"
+  }
+}

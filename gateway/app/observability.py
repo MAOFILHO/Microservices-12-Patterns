@@ -13,10 +13,11 @@ from fastapi import FastAPI, Request, Response
 from opentelemetry import trace
 
 from shop_common import metrics
+from shop_common.runtime import runtime_info
 from shop_common.telemetry import REQUEST_ID_HEADER, SPAN_STORE, current_trace_id, get_logger, init_tracing
 
 SERVICE_NAME = "gateway"
-_QUIET_PATHS = ("/health", "/metrics", "/debug/spans")
+_QUIET_PATHS = ("/health", "/metrics", "/debug/spans", "/debug/runtime")
 
 
 def install(app: FastAPI) -> None:
@@ -53,6 +54,10 @@ def install(app: FastAPI) -> None:
     async def prometheus_metrics():
         body, content_type = metrics.render()
         return Response(content=body, media_type=content_type)
+
+    @app.get("/debug/runtime", include_in_schema=False)
+    async def debug_runtime():
+        return runtime_info(SERVICE_NAME, SERVICE_NAME)
 
     @app.get("/debug/spans", include_in_schema=False)
     async def debug_spans(trace_id: str | None = None):

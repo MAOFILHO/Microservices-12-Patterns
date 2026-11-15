@@ -32,3 +32,9 @@ def test_failing_mode_returns_500_until_healed(client, monkeypatch):
 def test_chaos_switch_is_off_unless_enabled(client, monkeypatch):
     monkeypatch.delenv("CHAOS_ENABLED", raising=False)
     assert client.post("/api/payment/chaos", json={"mode": "failing"}).status_code == 403
+
+
+def test_a_simulated_decline_is_a_normal_answer(client):
+    r = client.post("/api/payment/charge", json={"order_id": 4, "amount_cents": 900, "simulate": "decline"})
+    assert r.status_code == 200
+    assert r.get_json()["result"]["status"] == "DECLINED"

@@ -3,6 +3,9 @@
 Bounded context (pattern 2): Inventory does not know a product's name or price. It knows a
 StockItem keyed by the catalog's product_id, with how many are on hand and how many are reserved.
 Catalog owns "what we sell"; Inventory owns "how many we have".
+
+M3: holds stock for the checkout saga (pattern 8) and finishes the sale when an OrderConfirmed
+event arrives from the bus (pattern 7).
 """
 import os
 
@@ -35,4 +38,11 @@ def create_app(config_name: str | None = None) -> Flask:
 
         seed_stock_if_empty()
         install_observability(app, "inventory", db)
+
+        # Pattern 7: act on OrderConfirmed events from the bus (no-op without REDIS_URL).
+        from shop_common.flask_support import instance_id
+
+        from .consumer import start as start_consumer
+
+        start_consumer(app, instance_id("inventory"))
         return app

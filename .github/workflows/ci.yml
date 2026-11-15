@@ -51,6 +51,7 @@ jobs:
             requirements: services/inventory/requirements.txt
             tests: services/inventory/tests
             shared: flask
+            contracts: true
     steps:
       - uses: actions/checkout@v4
 
@@ -100,6 +101,50 @@ jobs:
 
       - name: Type-check and build
         run: npm run build
+
+  containers:
+    # Pattern 9. Builds every image exactly as Azure will run it (linux/amd64), starts it, and checks
+    # it answers /health and does not run as root. Nothing is pushed anywhere.
+    name: Container image (${{ matrix.image }})
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - { image: user, dir: services/user, port: 5101, shared: true }
+          - { image: catalog, dir: services/catalog, port: 5102, shared: true }
+          - { image: order, dir: services/order, port: 5103, shared: true }
+          - { image: payment, dir: services/payment, port: 5104, shared: true }
+          - { image: inventory, dir: services/inventory, port: 5105, shared: true }
+          - { image: gateway, dir: gateway, port: 8100, shared: true }
+          - { image: registry, dir: registry, port: 8500, shared: false }
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Stage shared package (shop_common)
+        if: matrix.shared
+        run: cp -r shared "${{ matrix.dir }}/_shared"
+
+      - name: Build for linux/amd64
+        run: >
+          docker build --platform linux/amd64 --build-arg GIT_SHA=${{ github.sha }}
+          -t ms12p-${{ matrix.image }}:${{ github.sha }} ${{ matrix.dir }}
+
+      - name: Run it, check health and that it is not root
+        run: |
+          docker run -d --name svc -p ${{ matrix.port }}:${{ matrix.port }} -e RUN_MODE=local \
+            ms12p-${{ matrix.image }}:${{ github.sha }}
+          for i in $(seq 1 30); do curl -sf http://127.0.0.1:${{ matrix.port }}/health && break; sleep 1; done
+          curl -sf http://127.0.0.1:${{ matrix.port }}/health
+          uid=$(docker exec svc id -u)
+          echo "runs as uid $uid"
+          test "$uid" != "0"
+          size=$(docker image inspect ms12p-${{ matrix.image }}:${{ github.sha }} --format '{{.Size}}')
+          echo "| ${{ matrix.image }} | $((size / 1024 / 1024)) MB | uid $uid | linux/amd64 |" >> "$GITHUB_STEP_SUMMARY"
+
+      - name: Container logs (on failure)
+        if: failure()
+        run: docker logs svc || true
 
   bicep:
     name: Bicep (build)

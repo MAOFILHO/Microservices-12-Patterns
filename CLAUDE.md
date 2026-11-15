@@ -18,7 +18,7 @@ history, monolith dropped). The full agreed plan is in [`docs/PLAN.md`](docs/PLA
 - **Local + Azure.** `make provision` / `make teardown` / `make verify`, $25/mo budget alert.
   Nothing is deployed to Azure before milestone M3, and only with the owner's go-ahead.
 - **Phased delivery**: M0 bootstrap, then M1 (patterns 1, 2, 5, 6), M2 (10, 12, 4, 11),
-  M3 (7, 8, 9, 3 + Azure). One PR per milestone.
+  M3a (8, 7, 9, local) and M3b (3 + Azure, owner go-ahead). One PR per milestone.
 - Screenshots live in `docs/screenshots/` and are referenced by relative path. Never use GitHub
   `user-attachments` links (they went dead in the parent project).
 

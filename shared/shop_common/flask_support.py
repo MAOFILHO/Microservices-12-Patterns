@@ -5,6 +5,7 @@ Endpoints added to every service:
   GET /health/db       which database this service owns (pattern 1); credentials never shown
   GET /debug/spans     this process's recent spans, optionally filtered by ?trace_id= (pattern 6)
   GET /metrics         Prometheus text format (pattern 6)
+  GET /debug/runtime   what this process runs as: uid, container or not, image git SHA (pattern 9)
   POST /debug/crash    stops this process, for the replica and discovery demos (CHAOS_ENABLED=1 only)
 
 Every response carries X-Instance-Id, so a demo can show which replica answered (pattern 10).
@@ -19,6 +20,7 @@ from sqlalchemy import inspect
 
 from . import metrics
 from .discovery import DISCOVERY
+from .runtime import runtime_info
 from .telemetry import REQUEST_ID_HEADER, SPAN_STORE, current_trace_id, get_logger, init_tracing
 
 
@@ -28,6 +30,16 @@ INSTANCE_HEADER = "X-Instance-Id"
 def instance_id(service_name: str) -> str:
     """Set by run_local.py (e.g. order-5113); Container Apps sets the replica name."""
     return os.environ.get("INSTANCE_ID") or os.environ.get("CONTAINER_APP_REPLICA_NAME") or f"{service_name}-{os.getpid()}"
+
+
+def is_serving_process(app: Flask) -> bool:
+    """False in the file-watcher process of app.run(debug=True).
+
+    The reloader runs a watcher plus a worker (marked WERKZEUG_RUN_MAIN=true), and both build the
+    app. Only the worker serves requests, so only it may run background threads (registry
+    heartbeats, outbox relay, event consumer). Under gunicorn there is no reloader.
+    """
+    return not app.debug or os.environ.get("WERKZEUG_RUN_MAIN") == "true"
 
 
 def chaos_enabled() -> bool:
@@ -55,7 +67,7 @@ def install(app: Flask, service_name: str, db) -> None:
     def _record(response):
         response.headers[INSTANCE_HEADER] = this_instance
         route = request.url_rule.rule if request.url_rule else "unmatched"
-        if route in ("/health", "/debug/spans", "/metrics"):
+        if route in ("/health", "/debug/spans", "/metrics", "/debug/runtime"):
             return response
         elapsed = time.perf_counter() - g.get("request_started", time.perf_counter())
         metrics.observe(service_name, request.method, route, response.status_code, elapsed)
@@ -97,6 +109,10 @@ def install(app: Flask, service_name: str, db) -> None:
         body, content_type = metrics.render()
         return Response(body, content_type=content_type)
 
+    @app.get("/debug/runtime")
+    def debug_runtime():
+        return jsonify(runtime_info(service_name, this_instance))
+
     @app.post("/debug/crash")
     def debug_crash():
         if not chaos_enabled():
@@ -107,5 +123,5 @@ def install(app: Flask, service_name: str, db) -> None:
         return jsonify({"stopping": this_instance})
 
     public_url = os.environ.get("SERVICE_PUBLIC_URL")
-    if public_url:
+    if public_url and is_serving_process(app):
         DISCOVERY.register(service_name, this_instance, public_url)
