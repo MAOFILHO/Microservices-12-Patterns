@@ -1,5 +1,5 @@
 from application.models import StockItem
-from application.seed import SAMPLE_STOCK, seed_stock_if_empty
+from application.seed import SAMPLE_STOCK, seed_missing_stock
 
 
 def test_available_is_on_hand_minus_reserved():
@@ -7,13 +7,13 @@ def test_available_is_on_hand_minus_reserved():
 
 
 def test_seed_is_idempotent(app):
-    seed_stock_if_empty()
-    seed_stock_if_empty()
+    seed_missing_stock()
+    seed_missing_stock()
     assert StockItem.query.count() == len(SAMPLE_STOCK)
 
 
 def test_get_stock_and_404(client):
-    seed_stock_if_empty()
+    seed_missing_stock()
     r = client.get("/api/inventory/1")
     assert r.status_code == 200
     assert r.get_json()["result"]["on_hand"] == SAMPLE_STOCK[1]
@@ -23,4 +23,4 @@ def test_get_stock_and_404(client):
 def test_health_db_reports_only_own_tables(client):
     body = client.get("/health/db").get_json()
     assert body["service"] == "inventory"
-    assert body["tables"] == ["stock_item"]
+    assert body["tables"] == ["consumed_event", "reservation", "stock_item"]

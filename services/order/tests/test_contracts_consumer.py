@@ -38,6 +38,14 @@ def test_order_to_payment_contract(monkeypatch):
         }}, "application/json")
     )
     (
+        pact.upon_receiving("a charge the bank declines")
+        .given("payment is healthy")
+        .with_request("POST", "/api/payment/charge")
+        .with_body({"order_id": match.int(43), "amount_cents": match.int(899), "simulate": "decline"}, "application/json")
+        .will_respond_with(200)
+        .with_body({"result": {"id": match.int(2), "status": "DECLINED"}}, "application/json")
+    )
+    (
         pact.upon_receiving("a health check through the circuit breaker")
         .given("payment is healthy")
         .with_request("GET", "/api/payment/ping")
@@ -49,6 +57,7 @@ def test_order_to_payment_contract(monkeypatch):
         payment = clients.charge(42, 2598)
         assert payment["status"] == "APPROVED"
         assert payment["amount_cents"] == 2598
+        assert clients.charge(43, 899, "decline")["status"] == "DECLINED"
         assert clients.call_payment("GET", "/api/payment/ping").json() == {"status": "ok"}
     pact.write_file(PACT_DIR, overwrite=True)
 
@@ -65,4 +74,44 @@ def test_order_to_catalog_contract(monkeypatch):
     with pact.serve() as server:
         monkeypatch.setitem(clients.STATIC_URLS, "catalog", str(server.url).rstrip("/"))
         assert clients.product_prices() == {1: 1299}
+    pact.write_file(PACT_DIR, overwrite=True)
+
+
+def test_order_to_inventory_contract(monkeypatch):
+    pact = Pact("order", "inventory").with_specification("V4")
+    rid = "3f0c1d2e-0000-4000-8000-000000000001"
+    (
+        pact.upon_receiving("a stock hold for a checkout")
+        .given("product 1 has stock")
+        .with_request("POST", "/api/inventory/reservations")
+        # Exact request bodies (no matchers): the mock tells this request and the next one apart
+        # by their bodies, since both are POSTs to the same path.
+        .with_body({"reservation_id": rid, "order_id": 42, "items": [{"product_id": 1, "quantity": 2}]},
+                   "application/json")
+        .will_respond_with(200)
+        .with_body({"result": {"reservation_id": match.str(rid), "status": "RESERVED"}}, "application/json")
+    )
+    (
+        pact.upon_receiving("a stock hold that is more than inventory has")
+        .given("product 1 has stock")
+        .with_request("POST", "/api/inventory/reservations")
+        .with_body({"reservation_id": "3f0c1d2e-0000-4000-8000-000000000002", "order_id": 43,
+                    "items": [{"product_id": 1, "quantity": 100000}]}, "application/json")
+        .will_respond_with(409)
+        .with_body({"short": match.each_like({"product_id": match.int(1), "available": match.int(25)}, min=1)},
+                   "application/json")
+    )
+    (
+        pact.upon_receiving("a release of a stock hold")
+        .given("a stock hold exists", reservation_id=rid)
+        .with_request("POST", f"/api/inventory/reservations/{rid}/release")
+        .will_respond_with(200)
+        .with_body({"result": {"reservation_id": rid, "status": "RELEASED"}}, "application/json")
+    )
+    with pact.serve() as server:
+        monkeypatch.setitem(clients.STATIC_URLS, "inventory", str(server.url).rstrip("/"))
+        assert clients.reserve_stock(rid, 42, [{"product_id": 1, "quantity": 2}])["status"] == "RESERVED"
+        with pytest.raises(clients.OutOfStock):
+            clients.reserve_stock("3f0c1d2e-0000-4000-8000-000000000002", 43, [{"product_id": 1, "quantity": 100000}])
+        assert clients.release_stock(rid)["status"] == "RELEASED"
     pact.write_file(PACT_DIR, overwrite=True)

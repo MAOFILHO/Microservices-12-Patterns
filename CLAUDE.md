@@ -18,7 +18,7 @@ history, monolith dropped). The full agreed plan is in [`docs/PLAN.md`](docs/PLA
 - **Local + Azure.** `make provision` / `make teardown` / `make verify`, $25/mo budget alert.
   Nothing is deployed to Azure before milestone M3, and only with the owner's go-ahead.
 - **Phased delivery**: M0 bootstrap, then M1 (patterns 1, 2, 5, 6), M2 (10, 12, 4, 11),
-  M3 (7, 8, 9, 3 + Azure). One PR per milestone.
+  M3a (8, 7, 9, local) and M3b (3 + Azure, owner go-ahead). One PR per milestone.
 - Screenshots live in `docs/screenshots/` and are referenced by relative path. Never use GitHub
   `user-attachments` links (they went dead in the parent project).
 
@@ -27,7 +27,7 @@ history, monolith dropped). The full agreed plan is in [`docs/PLAN.md`](docs/PLA
 - Name prefix: `ms12p` (parent uses `flaskms`). Teardown deletes the whole resource group, so a
   shared name would delete the other project.
 
-## Current state (M2: patterns 1, 2, 4, 5, 6, 10, 11, 12 live)
+## Current state (M3a: every pattern except 3 is live)
 - Folders: `services/{user,catalog,order,payment,inventory}/` (Flask, one DB each), `gateway/`
   (FastAPI), `registry/` (FastAPI), `shared/` (`shop_common`), `contracts/`, `frontend/`, `infra/`,
   `scripts/`, `tests/`.
@@ -35,7 +35,19 @@ history, monolith dropped). The full agreed plan is in [`docs/PLAN.md`](docs/PLA
   `REPLICA_PORTS` (order also on 5113) and `CONTRACT_SUITES`. `setup.py`, `run_local.py`,
   `provision.py` and the smoke tests all read it. Add a service there.
 - Ports: user 5101, catalog 5102, order 5103 + 5113, payment 5104, inventory 5105, gateway 8100,
-  registry 8500, frontend 5273.
+  registry 8500, Redis 6390, frontend 5273.
+- Saga (pattern 8): `services/order/application/saga.py`, orchestrated: price, reserve_stock,
+  charge_payment, confirm; compensation releases the hold (or emits StockReleaseRequested). Steps in
+  `saga_step`; holds keyed by saga id in inventory's `reservation`. `{"simulate_decline": true}` on
+  checkout makes payment answer DECLINED (200, not a breaker failure).
+- Events (pattern 7): `shop_common/events.py` (Redis Stream `shop.events`, consumer groups, at least
+  once). Order writes `outbox_event` in the same transaction; `outbox.py` relays every 1 s; inventory's
+  `consumer.py` commits the hold on OrderConfirmed and dedupes via `consumed_event`. `POST /debug/bus`
+  (chaos) disconnects a replica's relay. Without `REDIS_URL` events just wait in the outbox.
+- Background threads (heartbeat, relay, consumer) start only where `is_serving_process(app)` is true:
+  Flask's debug reloader runs a watcher plus a worker, and both build the app.
+- Containers (pattern 9): multi-stage Dockerfiles, uid 10001, `.dockerignore` per service, `GIT_SHA`
+  build arg, `/debug/runtime`. CI job "Container image" builds, runs and checks all 7 images.
 - **`shop_common`** (`shared/`): every service calls `shop_common.flask_support.install(app, name, db)`
   inside its app context. It adds `/health`, `/health/db`, `/debug/spans`, `/metrics`,
   `POST /debug/crash` (only with `CHAOS_ENABLED=1`), the `X-Instance-Id` header, tracing, JSON logs,
@@ -52,16 +64,22 @@ history, monolith dropped). The full agreed plan is in [`docs/PLAN.md`](docs/PLA
 - Circuit breaker (pattern 4): `services/order/application/order_api/api/clients.py`, pybreaker
   (3 failures, 15 s) + tenacity (1 retry, 1 s timeout), only 5xx/timeouts count. Checkout prices from
   catalog, charges payment, keeps the cart on 503. Payment has a `healthy|failing|slow` switch.
-- Contracts (pattern 11): order's tests write `contracts/pacts/order-{payment,catalog}.json`; payment
-  and catalog verify them. CI fails if the regenerated files differ. Pact (pact-python 4.2) is
+- Contracts (pattern 11): order's tests write `contracts/pacts/order-{payment,catalog,inventory}.json`;
+  those 3 services verify them. CI fails if the regenerated files differ. Pact (pact-python 4.2) is
   test-only, installed from `contracts/requirements.txt`, never in images.
-- `make run` sets `REGISTRY_URL`, `CHAOS_ENABLED=1`, `INSTANCE_ID`, and restarts a stopped service
-  after 20 s. Registry TTL 10 s, heartbeat 2 s. Azure uses Container Apps DNS (no registry yet).
+- `make run` sets `REGISTRY_URL`, `REDIS_URL`, `CHAOS_ENABLED=1`, `INSTANCE_ID`, and restarts a stopped
+  service after 20 s. Inventory seeds stock for all 24 catalog products; `POST /api/inventory/<id>/restock`
+  (chaos only) keeps smoke runs from running out. Registry TTL 10 s, heartbeat 2 s. Azure uses Container Apps DNS (no registry yet).
 - Gotchas solved: FastAPI tracing middleware must be added AFTER the request-ID middleware; Flask-
-  SQLAlchemy's engine is instrumented per engine; Pact's `Verifier` needs `host="127.0.0.1"`; DB writes
-  inside a Pact state handler deadlock on SQLite (seed before verifying instead).
+  SQLAlchemy's engine is instrumented per engine; Pact's `Verifier` needs `host="127.0.0.1"`; Pact state
+  handlers run on another thread, so end the test's DB transaction first or SQLite deadlocks; two
+  replicas racing `create_all()` (use `shop_common.db_setup.create_tables`).
 - Smoke tests create users and products in the local SQLite DBs; delete `services/*/instance/`
   for a clean catalog (this also deletes the local signing key, which logs everyone out).
+
+## How to build (owner's preference)
+Follow the Matt Pocock `implement` skill (read it from the mattpocock-skills plugin folder): TDD at
+agreed seams, red test first; then `mattpocock-skills:code-review`; then commit.
 
 ## Stack
 Python 3.12 (Flask 3.1 services, FastAPI gateway), Node 18+ (React 18, TypeScript 5, Vite 5),

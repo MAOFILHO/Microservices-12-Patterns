@@ -99,6 +99,84 @@
       "type": "Synchronous/HTTP"
     },
     {
+      "description": "a charge the bank declines",
+      "pending": false,
+      "providerStates": [
+        {
+          "name": "payment is healthy"
+        }
+      ],
+      "request": {
+        "body": {
+          "content": {
+            "amount_cents": 899,
+            "order_id": 43,
+            "simulate": "decline"
+          },
+          "contentType": "application/json",
+          "encoded": false
+        },
+        "headers": {
+          "Content-Type": [
+            "application/json"
+          ]
+        },
+        "matchingRules": {
+          "body": {
+            "$.amount_cents": {
+              "combine": "AND",
+              "matchers": [
+                {
+                  "match": "integer"
+                }
+              ]
+            },
+            "$.order_id": {
+              "combine": "AND",
+              "matchers": [
+                {
+                  "match": "integer"
+                }
+              ]
+            }
+          }
+        },
+        "method": "POST",
+        "path": "/api/payment/charge"
+      },
+      "response": {
+        "body": {
+          "content": {
+            "result": {
+              "id": 2,
+              "status": "DECLINED"
+            }
+          },
+          "contentType": "application/json",
+          "encoded": false
+        },
+        "headers": {
+          "Content-Type": [
+            "application/json"
+          ]
+        },
+        "matchingRules": {
+          "body": {
+            "$.result.id": {
+              "combine": "AND",
+              "matchers": [
+                {
+                  "match": "integer"
+                }
+              ]
+            }
+          }
+        },
+        "status": 200
+      },
+      "type": "Synchronous/HTTP"
+    },
+    {
       "description": "a health check through the circuit breaker",
       "pending": false,
       "providerStates": [

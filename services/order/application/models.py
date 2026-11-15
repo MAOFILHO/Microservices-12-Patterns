@@ -37,3 +37,59 @@ class OrderItem(db.Model):
 
     def to_json(self):
         return {"product_id": self.product_id, "quantity": self.quantity}
+
+
+class SagaStep(db.Model):
+    """One line of a checkout saga's log (pattern 8). A saga is all rows sharing a saga_id."""
+
+    __tablename__ = "saga_step"
+
+    id = db.Column(db.Integer, primary_key=True)
+    saga_id = db.Column(db.String(36), nullable=False, index=True)
+    order_id = db.Column(db.Integer, nullable=False)
+    user_id = db.Column(db.Integer, nullable=False, index=True)
+    step = db.Column(db.String(30), nullable=False)    # price, reserve_stock, charge_payment, ...
+    status = db.Column(db.String(12), nullable=False)  # done | failed | compensated | skipped
+    detail = db.Column(db.String(300), nullable=True)
+    at = db.Column(db.DateTime, default=_utcnow)
+
+    def to_json(self):
+        return {"step": self.step, "status": self.status, "detail": self.detail,
+                "at": self.at.isoformat() if self.at else None}
+
+
+class OutboxEvent(db.Model):
+    """An event waiting to be published (pattern 7). Written in the same transaction as the change
+    it describes; the relay in outbox.py publishes it to Redis and stamps published_at."""
+
+    __tablename__ = "outbox_event"
+
+    id = db.Column(db.String(36), primary_key=True)  # also the event id consumers dedupe on
+    type = db.Column(db.String(40), nullable=False)
+    payload = db.Column(db.JSON, nullable=False)
+    created_at = db.Column(db.DateTime, default=_utcnow, index=True)
+    published_at = db.Column(db.DateTime, nullable=True, index=True)
+    attempts = db.Column(db.Integer, default=0, nullable=False)
+    last_error = db.Column(db.String(200), nullable=True)
+
+    def to_json(self):
+        return {
+            "event_id": self.id,
+            "type": self.type,
+            "payload": self.payload,
+            "created_at": self.created_at.isoformat() if self.created_at else None,
+            "published_at": self.published_at.isoformat() if self.published_at else None,
+            "attempts": self.attempts,
+            "last_error": self.last_error,
+        }
+
+
+class CheckoutLock(db.Model):
+    """At most one checkout saga per order at a time. The primary key makes a second insert fail,
+    even from the other replica, so a double click cannot hold stock or charge twice."""
+
+    __tablename__ = "checkout_lock"
+
+    order_id = db.Column(db.Integer, primary_key=True, autoincrement=False)
+    saga_id = db.Column(db.String(36), nullable=False)
+    started_at = db.Column(db.DateTime, nullable=False, default=_utcnow)

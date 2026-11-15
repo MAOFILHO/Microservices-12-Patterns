@@ -3,9 +3,12 @@ import { Link, useParams } from "react-router-dom";
 import ApiGatewayDemo from "../patterns/demos/ApiGatewayDemo";
 import BoundedContextDemo from "../patterns/demos/BoundedContextDemo";
 import CircuitBreakerDemo from "../patterns/demos/CircuitBreakerDemo";
+import ContainerizationDemo from "../patterns/demos/ContainerizationDemo";
 import ContractTestingDemo from "../patterns/demos/ContractTestingDemo";
+import EventDrivenDemo from "../patterns/demos/EventDrivenDemo";
 import DatabasePerServiceDemo from "../patterns/demos/DatabasePerServiceDemo";
 import ObservabilityDemo from "../patterns/demos/ObservabilityDemo";
+import SagaDemo from "../patterns/demos/SagaDemo";
 import ServiceDiscoveryDemo from "../patterns/demos/ServiceDiscoveryDemo";
 import StatelessDemo from "../patterns/demos/StatelessDemo";
 import { PATTERNS } from "../patterns/content";
@@ -19,6 +22,9 @@ const DEMOS: Record<string, () => ReactNode> = {
   "stateless-services": () => <StatelessDemo />,
   "contract-testing": () => <ContractTestingDemo />,
   "service-discovery": () => <ServiceDiscoveryDemo />,
+  "event-driven-architecture": () => <EventDrivenDemo />,
+  saga: () => <SagaDemo />,
+  containerization: () => <ContainerizationDemo />,
 };
 
 export default function PatternPage() {

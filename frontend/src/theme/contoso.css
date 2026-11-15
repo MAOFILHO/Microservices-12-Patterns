@@ -337,3 +337,24 @@ h3 {
   padding-left: 1.1rem;
   font-size: 0.85rem;
 }
+
+/* Saga timeline (pattern 8) */
+.saga-timeline {
+  list-style: none;
+  padding: 0;
+  margin: 0;
+  display: grid;
+  gap: 0.4rem;
+}
+.saga-step {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.5rem;
+  align-items: baseline;
+  padding: 0.5rem 0.75rem;
+  border-left: 3px solid var(--contoso-success);
+  background: var(--contoso-bg);
+  border-radius: 4px;
+}
+.saga-step.failed { border-left-color: var(--contoso-danger); }
+.saga-step.compensated { border-left-color: var(--contoso-warning); }

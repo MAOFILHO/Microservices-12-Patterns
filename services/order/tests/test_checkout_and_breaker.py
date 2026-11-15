@@ -17,6 +17,9 @@ def _isolate(monkeypatch):
     monkeypatch.setattr(clients, "current_user_id", lambda header: 1 if header else None)
     monkeypatch.setitem(clients.STATIC_URLS, "payment", "http://127.0.0.1:9")  # nothing listens on :9
     monkeypatch.setattr(clients, "product_prices", lambda: {1: 1299, 2: 899})
+    # Inventory is not running in unit tests: holds always succeed unless a test says otherwise.
+    monkeypatch.setattr(clients, "reserve_stock", lambda rid, order_id, items: {"status": "RESERVED"})
+    monkeypatch.setattr(clients, "release_stock", lambda rid: {"status": "RELEASED"})
     clients.BREAKER.close()
     yield
     clients.BREAKER.close()
@@ -54,7 +57,7 @@ def test_checkout_keeps_the_cart_when_payment_is_down(client):
 def test_checkout_charges_the_catalog_price_and_closes_the_order(client, monkeypatch):
     charged = {}
 
-    def fake_charge(order_id, amount_cents):
+    def fake_charge(order_id, amount_cents, simulate="approve"):
         charged.update(order_id=order_id, amount_cents=amount_cents)
         return {"id": 1, "order_id": order_id, "amount_cents": amount_cents, "status": "APPROVED"}
 
@@ -83,3 +86,19 @@ def test_catalog_down_means_no_charge(client, monkeypatch):
     monkeypatch.setattr(clients, "product_prices", down)
     _cart(client)
     assert client.post("/api/order/checkout", headers=AUTH).status_code == 503
+
+
+def test_a_payment_timeout_never_claims_nothing_was_charged(client):
+    """Payment at :9 refuses the call, which looks like a timeout: the charge state is unknown."""
+    _cart(client)
+    message = client.post("/api/order/checkout", headers=AUTH).get_json()["message"]
+    assert "could not be confirmed" in message
+    assert "nothing was charged" not in message
+
+
+def test_an_open_breaker_does_say_nothing_was_charged(client):
+    _cart(client)
+    for _ in range(clients.FAIL_MAX):
+        client.get("/api/order/payment-check")
+    message = client.post("/api/order/checkout", headers=AUTH).get_json()["message"]
+    assert "nothing was charged" in message

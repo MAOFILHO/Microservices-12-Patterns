@@ -21,6 +21,7 @@ STATIC_URLS = {
     "user": os.environ.get("USER_SERVICE_BASE_URL", "http://127.0.0.1:5101"),
     "catalog": os.environ.get("CATALOG_SERVICE_BASE_URL", "http://127.0.0.1:5102"),
     "payment": os.environ.get("PAYMENT_SERVICE_BASE_URL", "http://127.0.0.1:5104"),
+    "inventory": os.environ.get("INVENTORY_SERVICE_BASE_URL", "http://127.0.0.1:5105"),
 }
 
 PAYMENT_TIMEOUT_SECONDS = float(os.environ.get("PAYMENT_TIMEOUT_SECONDS", "1.0"))
@@ -47,6 +48,29 @@ def product_prices() -> dict[int, int]:
     response = requests.get(f"{base_url('catalog')}/api/products", timeout=3)
     response.raise_for_status()
     return {p["id"]: p["price"] for p in response.json()["results"]}
+
+
+# --- Inventory (saga steps, pattern 8) ------------------------------------------------------------
+
+class OutOfStock(Exception):
+    def __init__(self, short: list[dict]):
+        super().__init__("not enough stock")
+        self.short = short
+
+
+def reserve_stock(reservation_id: str, order_id: int, items: list[dict]) -> dict:
+    response = requests.post(f"{base_url('inventory')}/api/inventory/reservations", timeout=3,
+                             json={"reservation_id": reservation_id, "order_id": order_id, "items": items})
+    if response.status_code == 409:
+        raise OutOfStock(response.json().get("short", []))
+    response.raise_for_status()
+    return response.json()["result"]
+
+
+def release_stock(reservation_id: str) -> dict:
+    response = requests.post(f"{base_url('inventory')}/api/inventory/reservations/{reservation_id}/release", timeout=3)
+    response.raise_for_status()
+    return response.json()["result"]
 
 
 # --- Payment, behind the circuit breaker ----------------------------------------------------------
@@ -84,8 +108,11 @@ def call_payment(method: str, path: str, json: dict | None = None) -> requests.R
         raise PaymentUnavailable("failed")
 
 
-def charge(order_id: int, amount_cents: int) -> dict:
-    response = call_payment("POST", "/api/payment/charge", {"order_id": order_id, "amount_cents": amount_cents})
+def charge(order_id: int, amount_cents: int, simulate: str = "approve") -> dict:
+    body = {"order_id": order_id, "amount_cents": amount_cents}
+    if simulate != "approve":
+        body["simulate"] = simulate
+    response = call_payment("POST", "/api/payment/charge", body)
     response.raise_for_status()
     return response.json()["result"]
 

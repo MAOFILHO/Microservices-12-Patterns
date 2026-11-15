@@ -1,5 +1,5 @@
-"""Live demo endpoints for the M2 pattern pages: 4 (Circuit Breaker), 10 (Stateless Services) and
-12 (Service Discovery). The stop and break switches work only with CHAOS_ENABLED=1 (make run)."""
+"""Live demo endpoints for patterns 4 (Circuit Breaker), 7 (Event-Driven), 10 (Stateless Services)
+and 12 (Service Discovery). The stop, break and bus switches work only with CHAOS_ENABLED=1 (make run)."""
 import asyncio
 import time
 
@@ -7,6 +7,8 @@ import httpx
 from fastapi import APIRouter, Request
 from fastapi.responses import JSONResponse
 from pydantic import BaseModel
+
+from shop_common.runtime import runtime_info
 
 from .. import config
 from ..observability import upstream_headers
@@ -120,3 +122,73 @@ async def set_payment_mode(body: PaymentMode):
     except httpx.HTTPError as exc:
         return JSONResponse({"message": f"payment unreachable ({exc.__class__.__name__})"}, status_code=503)
     return JSONResponse(response.json(), status_code=response.status_code)
+
+
+# --- Pattern 7: Event-Driven Architecture ------------------------------------------------------
+
+@router.get("/events")
+async def events(request: Request):
+    """Both ends of the bus: order's outbox (published or waiting) and what inventory acted on,
+    plus current stock, so the page can show a hold turning into a sale."""
+    async def get(service: str, path: str, base: str | None = None):
+        try:
+            response = await client.get(f"{base or config.url_for(service)}{path}", headers=upstream_headers(request))
+            return response.json() if response.status_code == 200 else None
+        except httpx.HTTPError:
+            return None
+
+    async with _client() as client:
+        # Every order replica reports its own bus switch; they share one outbox table, so any
+        # replica's answer is the outbox.
+        consumed, stock, reservations, *outboxes = await asyncio.gather(
+            get("inventory", "/api/inventory/events"),
+            get("inventory", "/api/inventory"),
+            get("inventory", "/api/inventory/reservations"),
+            *(get("order", "/api/order/outbox", base=b) for b in config.urls_for("order")),
+        )
+    buses = [o for o in outboxes if o]
+    outbox = buses[0] if buses else None
+    return {
+        "outbox": outbox,
+        "consumed": consumed["results"] if consumed else None,
+        "stock": stock["results"] if stock else None,
+        "reservations": reservations["results"] if reservations else None,
+        "bus_connected": [b["bus_connected"] for b in buses] or None,
+        "chaos_enabled": config.CHAOS_ENABLED,
+    }
+
+
+class BusSwitch(BaseModel):
+    connected: bool
+
+
+@router.post("/events/bus")
+async def set_bus(body: BusSwitch):
+    """Disconnects (or reconnects) every order replica's outbox relay from the bus."""
+    if not config.CHAOS_ENABLED:
+        return JSONResponse(_CHAOS_OFF, status_code=403)
+    async with _client() as client:
+        results = await asyncio.gather(
+            *(client.post(f"{base}/debug/bus", json={"connected": body.connected}) for base in config.urls_for("order")),
+            return_exceptions=True,
+        )
+    switched = sum(1 for r in results if isinstance(r, httpx.Response) and r.status_code == 200)
+    return {"bus_connected": body.connected, "replicas_switched": switched}
+
+
+# --- Pattern 9: Containerization ---------------------------------------------------------------
+
+@router.get("/runtime")
+async def runtime(request: Request):
+    """How every process runs: as root or not, in a container or not, which build (git SHA)."""
+    async def one(service: str, base: str) -> dict:
+        try:
+            response = await client.get(f"{base}/debug/runtime", headers=upstream_headers(request))
+            return response.json()
+        except (httpx.HTTPError, ValueError):
+            return {"service": service, "instance": base, "unreachable": True}
+
+    async with _client() as client:
+        targets = [(n, url) for n in config.SERVICE_BASE_URLS for url in config.urls_for(n)]
+        services = await asyncio.gather(*(one(n, url) for n, url in targets))
+    return {"processes": [runtime_info("gateway", "gateway"), *services]}

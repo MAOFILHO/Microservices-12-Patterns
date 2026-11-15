@@ -1,11 +1,12 @@
 import time
 
-import requests
 from flask import jsonify, make_response, request
 
 from . import order_api_blueprint
-from .. import db
-from ..models import Order, OrderItem
+from shop_common.flask_support import chaos_enabled
+
+from .. import db, outbox, saga
+from ..models import Order, OrderItem, OutboxEvent
 from ..schemas import OrderAddItemRequest
 from ..validation import validate_form
 from .api import clients
@@ -73,30 +74,40 @@ def checkout():
     if order_model is None:
         return make_response(jsonify({"message": "No open order"}), 404)
 
-    try:
-        prices = clients.product_prices()
-    except requests.RequestException:
-        return make_response(jsonify({"message": "The catalog is unavailable, so the order cannot be priced. Your cart is kept."}), 503)
-    missing = [i.product_id for i in order_model.items if i.product_id not in prices]
-    if missing:
-        return make_response(jsonify({"message": f"Product(s) {missing} are no longer sold"}), 409)
-    amount = sum(prices[i.product_id] * i.quantity for i in order_model.items)
+    # Pattern 8 demo: {"simulate_decline": true} makes payment refuse the charge.
+    options = request.get_json(silent=True) or request.form
+    simulate = "decline" if str(options.get("simulate_decline", "")).lower() in ("1", "true", "yes") else "approve"
+    if simulate == "decline" and not chaos_enabled():
+        return make_response(jsonify({"message": "Demo switches are off (CHAOS_ENABLED is not 1)"}), 403)
+    status, body = saga.run_checkout(order_model, u_id, simulate)
+    return make_response(jsonify(body), status)
 
-    try:
-        payment = clients.charge(order_model.id, amount)
-    except clients.PaymentUnavailable as exc:
-        state = clients.breaker_state()
-        wait = f" Try again in {state['retry_in_seconds']:.0f} s." if state["retry_in_seconds"] else ""
-        return make_response(jsonify({
-            "message": f"Payment is unavailable right now, so nothing was charged. Your cart is kept.{wait}",
-            "reason": exc.reason,
-            "breaker": state,
-        }), 503)
 
-    order_model.is_open = False
-    db.session.add(order_model)
-    db.session.commit()
-    return jsonify({"result": order_model.to_json(), "payment": payment})
+@order_api_blueprint.route("/api/order/sagas", methods=["GET"])
+def sagas():
+    u_id = _user_id()
+    if u_id is None:
+        return _not_logged_in()
+    return jsonify({"results": saga.recent_sagas(u_id)})
+
+
+# Pattern 7 demo: what is waiting in the outbox and what has been published. No personal data:
+# events carry ids, quantities and amounts only.
+@order_api_blueprint.route("/api/order/outbox", methods=["GET"])
+def outbox_events():
+    rows = OutboxEvent.query.order_by(OutboxEvent.created_at.desc()).limit(20).all()
+    pending = OutboxEvent.query.filter(OutboxEvent.published_at.is_(None)).count()
+    return jsonify({"pending": pending, "results": [r.to_json() for r in rows],
+                    "bus_connected": outbox.is_connected()})
+
+
+@order_api_blueprint.route("/debug/bus", methods=["POST"])
+def bus_switch():
+    if not chaos_enabled():
+        return make_response(jsonify({"message": "Demo switches are off (CHAOS_ENABLED is not 1)"}), 403)
+    connected = bool((request.get_json(silent=True) or {}).get("connected", True))
+    outbox.set_connected(connected)
+    return jsonify({"bus_connected": connected})
 
 
 # Pattern 4 demo: one cheap call to payment through the same breaker that protects checkout.

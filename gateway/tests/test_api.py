@@ -119,3 +119,20 @@ def test_proxy_fails_over_when_a_replica_refuses_the_connection(monkeypatch):
         assert r.status_code == 200
         assert r.headers["X-Instance-Id"] == "catalog-alive"
     assert "http://dead/api/products" in tried
+
+
+def test_events_view_reports_unreachable_services_as_none(monkeypatch):
+    from app import config
+
+    for name in config.SERVICE_BASE_URLS:
+        monkeypatch.setitem(config.SERVICE_BASE_URLS, name, "http://127.0.0.1:9")
+    body = client.get("/api/patterns/events").json()
+    assert body["outbox"] is None and body["stock"] is None
+    assert client.post("/api/patterns/events/bus", json={"connected": False}).status_code == 403
+
+
+def test_runtime_reports_the_gateway_without_a_user_name():
+    gateway = client.get("/api/patterns/runtime").json()["processes"][0]
+    assert gateway["service"] == "gateway"
+    assert set(gateway) >= {"uid", "root", "in_container", "arch", "git_sha"}
+    assert "user" not in gateway

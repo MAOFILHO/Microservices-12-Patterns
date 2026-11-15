@@ -40,13 +40,18 @@ REGISTRY = Service("registry", REPO_ROOT / "registry", 8500, "REGISTRY_PORT", "f
 
 PYTHON_SERVICES = FLASK_SERVICES + [GATEWAY, REGISTRY]
 
+# The event bus (patterns 7 and 8): a Homebrew redis-server, no Docker. Offset from Redis' default
+# 6379 so a Redis the owner already runs is never touched.
+REDIS_PORT = int(os.environ.get("REDIS_PORT", 6390))
+REDIS_URL = f"redis://127.0.0.1:{REDIS_PORT}/0"
+
 # Extra local replicas (pattern 10): service name -> extra ports. Each runs as its own process
 # from the same folder, and registers with the registry under its own instance id.
 REPLICA_PORTS: dict[str, list[int]] = {"order": [5113]}
 
-# Suites whose tests need pact-python (pattern 11): order is the consumer, payment and catalog
+# Suites whose tests need pact-python (pattern 11): order is the consumer; payment, catalog and inventory
 # verify they still honour its contracts.
-CONTRACT_SUITES = {"order", "payment", "catalog"}
+CONTRACT_SUITES = {"order", "payment", "catalog", "inventory"}
 CONTRACTS_DIR = REPO_ROOT / "contracts"
 
 # shop_common (shared/), installed into every Python venv by setup.py.
