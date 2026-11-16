@@ -4,10 +4,24 @@ import github_identity as gi
 
 
 def test_only_this_repos_main_branch_can_sign_in_as_it():
-    cred = gi.federated_credential("MAOFILHO/Microservices-12-Patterns")
-    assert cred["issuer"] == "https://token.actions.githubusercontent.com"
-    assert cred["subject"] == "repo:MAOFILHO/Microservices-12-Patterns:ref:refs/heads/main"
-    assert cred["audiences"] == ["api://AzureADTokenExchange"]
+    """GitHub may send the name-only subject or the one with account and repo ids (newer repos;
+    seen on the first real Deploy run). Both are trusted, both for main of this repo only."""
+    creds = gi.federated_credentials("MAOFILHO/Microservices-12-Patterns", owner_id=69284062, repo_id=1458985608)
+    assert [c["subject"] for c in creds] == [
+        "repo:MAOFILHO/Microservices-12-Patterns:ref:refs/heads/main",
+        "repo:MAOFILHO@69284062/Microservices-12-Patterns@1458985608:ref:refs/heads/main",
+    ]
+    assert len({c["name"] for c in creds}) == 2
+    for cred in creds:
+        assert cred["issuer"] == "https://token.actions.githubusercontent.com"
+        assert cred["audiences"] == ["api://AzureADTokenExchange"]
+
+
+def test_a_missing_second_credential_is_added_on_the_next_run():
+    creds = gi.federated_credentials("o/r", owner_id=1, repo_id=2)
+    existing = [creds[0]["name"]]
+    assert gi.missing_credentials(creds, existing) == [creds[1]]
+    assert gi.missing_credentials(creds, [c["name"] for c in creds]) == []
 
 
 def test_access_is_this_resource_group_only_never_the_subscription():
