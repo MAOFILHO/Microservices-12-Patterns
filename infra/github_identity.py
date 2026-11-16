@@ -3,8 +3,8 @@
 
 Creates, only where missing:
   1. an app registration named APP_NAME, and its service principal;
-  2. a federated credential (OIDC) trusting only this repo's main branch, so GitHub signs in with a
-     short-lived token and no client secret exists anywhere;
+  2. federated credentials (OIDC) trusting only this repo's main branch, in both subject forms
+     GitHub uses, so it signs in with a short-lived token and no client secret exists anywhere;
   3. the Contributor role on the project resource group only, never the subscription.
 
 Then stores the three ids (client, tenant, subscription) as GitHub Actions secrets. They are not
@@ -36,14 +36,22 @@ STEPS = ["app", "service_principal", "credential", "role", "github_secrets"]
 GITHUB_SECRETS = ["AZURE_CLIENT_ID", "AZURE_TENANT_ID", "AZURE_SUBSCRIPTION_ID"]
 
 
-def federated_credential(repo: str) -> dict:
-    return {
-        "name": CREDENTIAL_NAME,
-        "issuer": ISSUER,
-        "subject": f"repo:{repo}:ref:refs/heads/main",
-        "audiences": ["api://AzureADTokenExchange"],
-        "description": "GitHub Actions on main of this repo only (Deploy workflow).",
+def federated_credentials(repo: str, owner_id: int, repo_id: int) -> list[dict]:
+    """The subjects GitHub may present for a run on main of this repo: the name-only form, and the
+    form with account and repo ids that GitHub sends for newer repos (seen on the first real
+    Deploy run). The id form also survives a rename and rejects a re-created repo of the same name."""
+    owner, name = repo.split("/")
+    subjects = {
+        CREDENTIAL_NAME: f"repo:{repo}:ref:refs/heads/main",
+        f"{CREDENTIAL_NAME}-ids": f"repo:{owner}@{owner_id}/{name}@{repo_id}:ref:refs/heads/main",
     }
+    return [{"name": cred_name, "issuer": ISSUER, "subject": subject, "audiences": ["api://AzureADTokenExchange"],
+             "description": "GitHub Actions on main of this repo only (Deploy workflow)."}
+            for cred_name, subject in subjects.items()]
+
+
+def missing_credentials(wanted: list[dict], existing_names: list[str]) -> list[dict]:
+    return [cred for cred in wanted if cred["name"] not in existing_names]
 
 
 def role_scope(subscription_id: str, resource_group: str) -> str:
@@ -115,12 +123,14 @@ def main() -> int:
 
     client_id = app_id()
     object_id = sp_object_id(client_id) if client_id else None
+    owner_id, repo_id = (int(v) for v in _run(["gh", "api", f"repos/{repo}", "--jq", ".owner.id, .id"]).split())
+    wanted = federated_credentials(repo, owner_id, repo_id)
     secret_names = {item["name"] for item in json.loads(_run(["gh", "secret", "list", "--repo", repo, "--json", "name"]) or "[]")}
     found = {
         "app": client_id is not None,
         "service_principal": object_id is not None,
-        "credential": bool(client_id and any(c["name"] == CREDENTIAL_NAME for c in
-                                             _az_json(["ad", "app", "federated-credential", "list", "--id", client_id]))),
+        "credential": bool(client_id) and not missing_credentials(
+            wanted, [c["name"] for c in _az_json(["ad", "app", "federated-credential", "list", "--id", client_id])]),
         "resource_group": _run(["az", "group", "exists", "--name", RESOURCE_GROUP]) == "true",
         "role": False,
         "github_secrets": set(GITHUB_SECRETS) <= secret_names,
@@ -135,8 +145,10 @@ def main() -> int:
     if "service_principal" in todo:
         object_id = _az_json(["ad", "sp", "create", "--id", client_id])["id"]
     if "credential" in todo:
-        _run(["az", "ad", "app", "federated-credential", "create", "--id", client_id,
-              "--parameters", json.dumps(federated_credential(repo))])
+        existing = [c["name"] for c in _az_json(["ad", "app", "federated-credential", "list", "--id", client_id]) or []]
+        for cred in missing_credentials(wanted, existing):
+            _run(["az", "ad", "app", "federated-credential", "create", "--id", client_id,
+                  "--parameters", json.dumps(cred)])
     if "role" in todo:
         _run(["az", *role_assignment_args(object_id, scope)])
     if not found["resource_group"]:

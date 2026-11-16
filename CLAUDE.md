@@ -27,7 +27,7 @@ history, monolith dropped). The full agreed plan is in [`docs/PLAN.md`](docs/PLA
 - Name prefix: `ms12p` (parent uses `flaskms`). Teardown deletes the whole resource group, so a
   shared name would delete the other project.
 
-## Current state (M3b: all 12 patterns live locally; Azure run is #11)
+## Current state (complete: 12 of 12 live; one Azure run done and torn down, #11)
 - Folders: `services/{user,catalog,order,payment,inventory}/` (Flask, one DB each), `gateway/`
   (FastAPI), `registry/` (FastAPI), `shared/` (`shop_common`), `contracts/`, `frontend/`, `infra/`,
   `scripts/`, `tests/`.
@@ -86,6 +86,9 @@ API, reused 5 min then revalidated by ETag (304s are free), last good answer kep
 - `make run` sets `REGISTRY_URL`, `REDIS_URL`, `CHAOS_ENABLED=1`, `INSTANCE_ID`, and restarts a stopped
   service after 20 s. Inventory seeds stock for all 24 catalog products; `POST /api/inventory/<id>/restock`
   (chaos only) keeps smoke runs from running out. Registry TTL 10 s, heartbeat 2 s. Azure uses Container Apps DNS (no registry yet).
+- Azure run gotchas: GitHub's OIDC subject may be `repo:<owner>@<id>/<repo>@<id>:ref:...`, so the
+  identity trusts both forms; `make verify` can time out while an empty Container Apps environment
+  is "ScheduledForDelete" (no cost) - re-run it.
 - Gotchas solved: FastAPI tracing middleware must be added AFTER the request-ID middleware; Flask-
   SQLAlchemy's engine is instrumented per engine; Pact's `Verifier` needs `host="127.0.0.1"`; Pact state
   handlers run on another thread, so end the test's DB transaction first or SQLite deadlocks; two

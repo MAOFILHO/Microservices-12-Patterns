@@ -4,8 +4,9 @@ A small Contoso e-commerce system that shows **12 microservices patterns working
 Each pattern gets its own page with an explanation, when *not* to use it, and a live demo you
 can click.
 
-> **Status: M3b, delivery.** All 12 patterns are live locally, each with a working demo. The
-> first real Azure run is the last step (issue #11). The foundation is copied from
+> **Status: complete.** All 12 patterns are live, each with a working demo, locally and in one
+> real Azure run (issue #11): provision, Deploy through GitHub Actions with OIDC, smoke tests,
+> screenshots, teardown. The foundation is copied from
 > [Azure-Ecommerce-Monolith-Microservices-Migration](https://github.com/MAOFILHO/Azure-Ecommerce-Monolith-Microservices-Migration).
 > See [docs/PLAN.md](docs/PLAN.md) and the [M3b issues](https://github.com/MAOFILHO/Microservices-12-Patterns/issues).
 
@@ -152,8 +153,25 @@ Azure Container Apps (one app per service plus the gateway, all scale-to-zero; R
 always-on internal bus) + MySQL Flexible Server. About $0.21 for an 8-hour session; see
 [cost_estimate.md](cost_estimate.md). In Azure, discovery uses Container Apps DNS (no registry), and
 the demo switches stay off. Redis is reachable only from apps inside the environment and has no
-password, which is fine for a demo where every app is ours. Nothing has been deployed yet: the first
-Azure run is issue #11.
+password, which is fine for a demo where every app is ours.
+
+### The Azure run (#11)
+`make provision` built 6 images in the cloud (67-69 MB each, tagged with the commit), deployed them
+plus Redis, and created the $25 budget alert. The Azure smoke tests
+(`tests/smoke/test_post_provision_azure.py`) passed 4 of 4: a sale settled through Redis, demo
+switches answered 403, every container ran as uid 10001 on the deployed commit, and the CI-CD page
+saw every service on main. The Deploy button then signed in with OIDC and correctly rebuilt
+nothing. Everything was removed with `make teardown` the same evening.
+
+<img width="100%" alt="Containerization page in Azure: 6 containers, uid 10001, linux/x86_64, built from one commit, 67-69 MB" src="docs/screenshots/azure-p09-containerization.jpg" />
+
+<img width="100%" alt="CI-CD page in Azure: every service on the latest commit of main" src="docs/screenshots/azure-p03-ci-cd.jpg" />
+
+<img width="100%" alt="Event-Driven page in Azure: 3 events published within a second; inventory sold the reservation" src="docs/screenshots/azure-p07-event-driven.jpg" />
+
+Lessons from the run: GitHub now presents an OIDC subject with account and repo ids, so the
+identity trusts both forms (PR #14); `make verify` can time out while Azure removes an empty
+Container Apps environment, which takes longer than everything else and bills nothing.
 
 ```bash
 make github-identity   # once: the Azure identity the Deploy workflow uses (OIDC, no secret)
