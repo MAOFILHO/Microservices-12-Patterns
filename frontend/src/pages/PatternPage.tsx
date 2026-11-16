@@ -2,6 +2,7 @@ import { ReactNode } from "react";
 import { Link, useParams } from "react-router-dom";
 import ApiGatewayDemo from "../patterns/demos/ApiGatewayDemo";
 import BoundedContextDemo from "../patterns/demos/BoundedContextDemo";
+import CiCdDemo from "../patterns/demos/CiCdDemo";
 import CircuitBreakerDemo from "../patterns/demos/CircuitBreakerDemo";
 import ContainerizationDemo from "../patterns/demos/ContainerizationDemo";
 import ContractTestingDemo from "../patterns/demos/ContractTestingDemo";
@@ -25,6 +26,7 @@ const DEMOS: Record<string, () => ReactNode> = {
   "event-driven-architecture": () => <EventDrivenDemo />,
   saga: () => <SagaDemo />,
   containerization: () => <ContainerizationDemo />,
+  "ci-cd-pipeline": () => <CiCdDemo />,
 };
 
 export default function PatternPage() {

@@ -178,8 +178,7 @@ async def set_bus(body: BusSwitch):
 
 # --- Pattern 9: Containerization ---------------------------------------------------------------
 
-@router.get("/runtime")
-async def runtime(request: Request):
+async def collect_runtimes(request: Request) -> list[dict]:
     """How every process runs: as root or not, in a container or not, which build (git SHA)."""
     async def one(service: str, base: str) -> dict:
         try:
@@ -191,4 +190,9 @@ async def runtime(request: Request):
     async with _client() as client:
         targets = [(n, url) for n in config.SERVICE_BASE_URLS for url in config.urls_for(n)]
         services = await asyncio.gather(*(one(n, url) for n, url in targets))
-    return {"processes": [runtime_info("gateway", "gateway"), *services]}
+    return [runtime_info("gateway", "gateway"), *services]
+
+
+@router.get("/runtime")
+async def runtime(request: Request):
+    return {"processes": await collect_runtimes(request)}
