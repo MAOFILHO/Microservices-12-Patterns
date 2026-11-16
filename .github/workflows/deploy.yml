@@ -67,7 +67,8 @@ jobs:
         run: |
           set -euo pipefail
           head=$(git rev-parse --short=12 HEAD)
-          services=$(python scripts/deploy_plan.py "$head" < running.json | tr '\n' ' ')
+          # xargs joins the lines and trims: "nothing to deploy" must be truly empty, not a space.
+          services=$(python scripts/deploy_plan.py "$head" < running.json | xargs)
           echo "head=$head" >> "$GITHUB_OUTPUT"
           echo "services=$services" >> "$GITHUB_OUTPUT"
           echo "Deploying commit $head: ${services:-nothing changed}"
