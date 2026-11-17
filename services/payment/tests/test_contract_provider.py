@@ -19,7 +19,7 @@ def test_payment_honours_the_order_services_contract(app):
     db.session.remove()
 
     def healthy() -> None:
-        routes._mode["value"] = "healthy"
+        routes.SWITCH.value = "healthy"
 
     def charge_exists() -> None:
         healthy()

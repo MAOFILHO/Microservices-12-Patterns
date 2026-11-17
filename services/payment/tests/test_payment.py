@@ -115,7 +115,7 @@ def test_a_charge_voided_while_it_ran_does_not_approve_when_it_finishes(client, 
     try:
         assert _charge(client, "saga-1").get_json()["result"]["status"] == "VOIDED"
     finally:
-        routes._mode["value"] = "healthy"
+        routes.SWITCH.value = "healthy"
 
 
 def _force_void(key):
@@ -135,7 +135,7 @@ def test_a_slow_retry_does_not_wait_again(client, monkeypatch):
         _charge(client, "saga-1")
         _charge(client, "saga-1")
     finally:
-        routes._mode["value"] = "healthy"
+        routes.SWITCH.value = "healthy"
     assert len(sleeps) == 1
 
 
@@ -150,7 +150,7 @@ def test_a_slow_charge_is_recorded_as_processing_before_the_slow_part(client, mo
     try:
         assert _charge(client, "saga-1").get_json()["result"]["status"] == "APPROVED"
     finally:
-        routes._mode["value"] = "healthy"
+        routes.SWITCH.value = "healthy"
     assert seen_while_slow == ["PROCESSING"]  # a void during the slow part sees it in flight
 
 

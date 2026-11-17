@@ -6,8 +6,8 @@ can click.
 
 > **Status: complete.** All 12 patterns are live, each with a working demo, locally and in one
 > real Azure run: provision, deploy through GitHub Actions with OIDC, smoke tests, screenshots,
-> teardown. Demo 13, a slow payment in the middle of checkout, came from a reader's comment on
-> the project's LinkedIn post. The foundation is copied from
+> teardown. Demos 13 (a slow payment in the middle of checkout) and 14 (the saga's undo under
+> timeouts and duplicate events) came from readers' comments on the project's LinkedIn post. The foundation is copied from
 > [Azure-Ecommerce-Monolith-Microservices-Migration](https://github.com/MAOFILHO/Azure-Ecommerce-Monolith-Microservices-Migration).
 
 ## Project summary
@@ -27,15 +27,16 @@ React frontend with one page per pattern. Every demo calls the real services: no
 | M3a: async and packaging | 7, 8, 9 | [#4](https://github.com/MAOFILHO/Microservices-12-Patterns/pull/4) |
 | M3b: delivery and the Azure run | 3 | [#12](https://github.com/MAOFILHO/Microservices-12-Patterns/pull/12), [#13](https://github.com/MAOFILHO/Microservices-12-Patterns/pull/13), [#14](https://github.com/MAOFILHO/Microservices-12-Patterns/pull/14) |
 | Demo 13: a slow payment mid-checkout | 4 and 8, under a timeout | [#16](https://github.com/MAOFILHO/Microservices-12-Patterns/pull/16) |
+| Demo 14: compensation under fire | 7 and 8, under timeouts and duplicates | [#17](https://github.com/MAOFILHO/Microservices-12-Patterns/pull/17) |
 
 M3b was planned as 7 GitHub issues ([#5 to #11](https://github.com/MAOFILHO/Microservices-12-Patterns/issues?q=is%3Aissue)),
 all closed.
 
 **How it was checked.**
-- **181 unit tests** across 8 suites, each in its own virtualenv, built test-first from M3a on.
+- **194 unit tests** across 8 suites, each in its own virtualenv, built test-first from M3a on.
 - **Pact contract tests**: the order service's contracts with payment, catalog and inventory,
   verified against the real providers in CI.
-- **25 local smoke tests** against the running stack, and **4 Azure smoke tests** against the real
+- **28 local smoke tests** against the running stack, and **4 Azure smoke tests** against the real
   deployment.
 - **CI on every pull request** runs only what the change touches; every image is built for
   linux/amd64, started, and rejected if it runs as root. `main` requires the "CI ok" check.
@@ -62,6 +63,7 @@ or the cheapest SKUs, with a $25/month budget alert, then torn down and verified
 | 11 | [Contract Testing](#11-contract-testing) | Checks that APIs stay compatible across services | M2 |
 | 12 | [Service Discovery](#12-service-discovery) | Finds service instances automatically at runtime | M2 |
 | 13 | [Saga under a slow payment](#13-saga-under-a-slow-payment) | Follows the money and the stock when payment times out mid-checkout | Demo 13 |
+| 14 | [Compensation under fire](#14-compensation-under-fire) | Times out and duplicates the saga's undo, then checks the stock ends where it began | Demo 14 |
 
 ## Architecture
 
@@ -212,6 +214,24 @@ payment still said PROCESSING, so the order waited; 5 s later it settled as 1 ch
 2 mugs sold.
 
 <img width="100%" alt="Demo 13: payment slowed mid-checkout; the order waits as pending, then settles as 1 charge, 1 order, 2 mugs sold" src="docs/screenshots/p13-slow-payment.jpg" />
+
+### 14. Compensation under fire
+An undo is a new action, not a rewind, and it crosses the same unreliable network. A second
+reader asked for duplicate events and timeouts during compensation. Three cases:
+
+- **A release that beats its hold.** Inventory holds slowly (6 s); the saga gives up after 3 s and
+  sends a release as an event, which arrives first (about 4 s). Inventory records the release, so
+  the late hold holds nothing. Before this demo, that late hold kept the stock held for good.
+- **A release that times out but goes through.** The saga also sends it as an event. The event copy
+  lands first, the slow direct call second. Release only acts on a hold still RESERVED, so the
+  stock comes back once; the page shows both copies arrived.
+- **Duplicate events.** A replay button sends a checkout's events again with the same ids.
+  Inventory acts on 2 event types: one it has acted on before is skipped and counted. The other
+  types are not its business, so it ignores them (also counted).
+
+Here the hold arrived late: the release came first, the stock went 473 to 473, nothing held, 1 release received.
+
+<img width="100%" alt="Demo 14: inventory holds slowly; the saga's release arrives first, the late hold holds nothing, and the stock ends where it began" src="docs/screenshots/p14-compensation.jpg" />
 
 ## Run locally (no Docker)
 

@@ -34,6 +34,9 @@ def create_app(config_name: str | None = None) -> Flask:
 
         app.register_blueprint(inventory_api)
         db.create_all()
+        from shop_common.db_setup import add_missing_columns
+
+        add_missing_columns(db)  # demo 14: reservation.releases_received
         from .seed import seed_missing_stock
 
         seed_missing_stock()

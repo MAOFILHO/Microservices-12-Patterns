@@ -46,6 +46,34 @@ def chaos_enabled() -> bool:
     return os.environ.get("CHAOS_ENABLED") == "1"
 
 
+def switches_off() -> Response:
+    """The one answer every demo switch gives when CHAOS_ENABLED is not 1."""
+    response = jsonify({"message": "Demo switches are off (CHAOS_ENABLED is not 1)"})
+    response.status_code = 403
+    return response
+
+
+class DemoSwitch:
+    """A lab switch held in memory, one value per process: a demo setting, not data.
+    GET reads it; POST {"mode": ...} sets it, only when CHAOS_ENABLED=1."""
+
+    def __init__(self, *modes: str):
+        self.modes = modes
+        self.value = modes[0]
+
+    def respond(self) -> Response:
+        if request.method == "POST":
+            if not chaos_enabled():
+                return switches_off()
+            mode = (request.get_json(silent=True) or request.form.to_dict()).get("mode")
+            if mode not in self.modes:
+                response = jsonify({"message": f"mode must be one of {list(self.modes)}"})
+                response.status_code = 400
+                return response
+            self.value = mode
+        return jsonify({"mode": self.value, "modes": list(self.modes), "enabled": chaos_enabled()})
+
+
 def install(app: Flask, service_name: str, db) -> None:
     init_tracing(service_name)
     this_instance = instance_id(service_name)

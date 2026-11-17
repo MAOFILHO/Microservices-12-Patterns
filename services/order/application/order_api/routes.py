@@ -3,10 +3,10 @@ import time
 from flask import jsonify, make_response, request
 
 from . import order_api_blueprint
-from shop_common.flask_support import chaos_enabled
+from shop_common.flask_support import chaos_enabled, switches_off
 
 from .. import db, outbox, saga
-from ..models import Order, OrderItem, OutboxEvent
+from ..models import Order, OrderItem, OutboxEvent, SagaStep
 from ..schemas import OrderAddItemRequest
 from ..validation import validate_form
 from .api import clients
@@ -80,7 +80,7 @@ def checkout():
     options = request.get_json(silent=True) or request.form
     simulate = "decline" if str(options.get("simulate_decline", "")).lower() in ("1", "true", "yes") else "approve"
     if simulate == "decline" and not chaos_enabled():
-        return make_response(jsonify({"message": "Demo switches are off (CHAOS_ENABLED is not 1)"}), 403)
+        return switches_off()
     status, body = saga.run_checkout(order_model, u_id, simulate)
     return make_response(jsonify(body), status)
 
@@ -91,6 +91,27 @@ def sagas():
     if u_id is None:
         return _not_logged_in()
     return jsonify({"results": saga.recent_sagas(u_id)})
+
+
+# Demo 14: send a checkout's events to the bus again, with the same ids, as at-least-once delivery
+# can. Inventory should skip every one. Only your own checkout, only with the demo switches on.
+@order_api_blueprint.route("/api/order/sagas/<saga_id>/replay", methods=["POST"])
+def replay_saga_events(saga_id: str):
+    if not chaos_enabled():
+        return switches_off()
+    u_id = _user_id()
+    if u_id is None:
+        return _not_logged_in()
+    first = SagaStep.query.filter_by(saga_id=saga_id, user_id=u_id).order_by(SagaStep.id).first()
+    if first is None:
+        return make_response(jsonify({"message": "No such checkout"}), 404)
+    # Its events are all written after its first step: scan from there, not the whole outbox.
+    since = OutboxEvent.query.filter(OutboxEvent.created_at >= first.at).all()
+    events = [e for e in since if e.payload.get("saga_id") == saga_id]
+    for event in events:
+        event.published_at = None  # the relay sends it again within 1 s
+    db.session.commit()
+    return jsonify({"replayed": len(events), "event_ids": [e.id for e in events]})
 
 
 # Pattern 7 demo: what is waiting in the outbox and what has been published. No personal data:
@@ -106,7 +127,7 @@ def outbox_events():
 @order_api_blueprint.route("/debug/bus", methods=["POST"])
 def bus_switch():
     if not chaos_enabled():
-        return make_response(jsonify({"message": "Demo switches are off (CHAOS_ENABLED is not 1)"}), 403)
+        return switches_off()
     connected = bool((request.get_json(silent=True) or {}).get("connected", True))
     outbox.set_connected(connected)
     return jsonify({"bus_connected": connected})

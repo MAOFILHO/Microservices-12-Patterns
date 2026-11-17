@@ -303,6 +303,29 @@ export const PATTERNS: PatternInfo[] = [
     ],
     source: { label: "Stripe — Idempotent requests", url: "https://docs.stripe.com/api/idempotent_requests" },
   },
+  {
+    n: 14,
+    slug: "compensation",
+    name: "Compensation under fire",
+    what: "Times out and duplicates the saga's undo, then checks the stock ends where it began.",
+    milestone: "M3",
+    live: true,
+    problem:
+      "An undo is a new action, not a rewind, and it travels over the same unreliable network. A release can time out yet go through, so it is sent twice. A release can overtake the slow hold it undoes, so the hold lands afterwards with nothing left to cancel it. And at-least-once delivery sends any event twice.",
+    inThisProject: [
+      "Inventory has a demo switch: hold slowly (6 s, past the saga's 3 s wait) or release slowly.",
+      "When the hold times out, the saga sends its release as an event; it reaches inventory in about 4 s, before the 6 s hold. Inventory records a release for a hold it never saw as RELEASED (and logs it). When the late hold arrives, it finds that record and holds nothing.",
+      "A release that times out is also sent as an event. The event copy lands first, the slow direct call second. Release only acts on a hold that is still RESERVED, so the second copy changes nothing; the page counts both copies.",
+      "Inventory acts on 2 event types, OrderConfirmed and StockReleaseRequested. It remembers every id it acted on and skips one it has seen; other types are not its business and it ignores them. The replay button sends a checkout's events again with the same ids, and the page counts what was skipped and what was ignored.",
+      "Raised by a reader of the project's LinkedIn post, after demo 13.",
+    ],
+    whenNotToUse: [
+      "Recording releases for unknown holds keeps rows that never held anything. At scale they need a retention window, longer than any request can be late.",
+      "An undo that touches the outside world (an email sent, money refunded) cannot be made invisible: the customer sees both actions. Here the undo only moves stock inside one service.",
+      "Event-id dedupe needs the ids kept as long as a duplicate can arrive. A bus with a short redelivery window can keep fewer.",
+    ],
+    source: { label: "Microsoft — Compensating Transaction pattern", url: "https://learn.microsoft.com/azure/architecture/patterns/compensating-transaction" },
+  },
 ];
 
 export const SERVICE_NAMES = ["gateway", "user", "catalog", "order", "payment", "inventory"] as const;

@@ -1,15 +1,20 @@
 """Stock rules for the checkout saga (pattern 8) and the event consumer (pattern 7).
 
 reserve:  available -> reserved      (saga step 1; all lines or none)
-release:  reserved  -> available     (saga compensation)
+release:  reserved  -> available     (saga compensation; an unknown hold is recorded as RELEASED,
+                                      so a hold that arrives late is refused: demo 14)
 commit:   reserved  -> sold          (on OrderConfirmed: on hand goes down)
 
 Each is idempotent: calling it again for the same reservation changes nothing.
 """
+import logging
+
 from sqlalchemy.exc import IntegrityError
 
 from . import db
-from .models import Reservation, StockItem
+from .models import NEVER_HELD, Reservation, StockItem
+
+log = logging.getLogger(__name__)
 
 
 class OutOfStock(Exception):
@@ -29,7 +34,7 @@ def _in_lock_order(items: list[dict]) -> list[dict]:
 
 def reserve(reservation_id: str, order_id: int, items: list[dict]) -> Reservation:
     existing = db.session.get(Reservation, reservation_id)
-    if existing is not None:
+    if existing is not None:  # a retry, or a hold its release beat here: either way, hold nothing new
         return existing
     items = _in_lock_order(items)
     short = []
@@ -53,9 +58,24 @@ def reserve(reservation_id: str, order_id: int, items: list[dict]) -> Reservatio
     return reservation
 
 
-def release(reservation_id: str) -> Reservation | None:
+def release(reservation_id: str) -> Reservation:
     reservation = db.session.get(Reservation, reservation_id)
-    if reservation is None or reservation.status != "RESERVED":
+    if reservation is None:
+        # Demo 14: the release beat its hold here (the hold request was slow and the saga gave
+        # up). Record the release, so the late hold finds it and holds nothing.
+        log.warning("release for hold %s, which never arrived: recorded so a late hold is refused", reservation_id)
+        reservation = Reservation(id=reservation_id, order_id=NEVER_HELD, items=[], status="RELEASED",
+                                  releases_received=1)
+        db.session.add(reservation)
+        try:
+            db.session.commit()
+        except IntegrityError:  # the hold or another release landed at the same moment
+            db.session.rollback()
+            return release(reservation_id)
+        return reservation
+    reservation.releases_received = (reservation.releases_received or 0) + 1
+    if reservation.status != "RESERVED":
+        db.session.commit()
         return reservation
     for line in _in_lock_order(reservation.items):
         _lock(line["product_id"]).reserved -= line["quantity"]

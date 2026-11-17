@@ -161,3 +161,27 @@ def test_a_timed_out_hold_is_released_through_the_bus(client, calls, monkeypatch
     assert r.status_code == 503
     assert _events() == ["StockReleaseRequested", "CheckoutFailed"]
     assert OutboxEvent.query.filter_by(type="StockReleaseRequested").one().payload["reservation_id"] == r.get_json()["saga_id"]
+
+
+# --- Demo 14: replay a checkout's events, to show inventory skips duplicates ---------------------
+
+def test_replay_sends_a_checkouts_events_again_with_the_same_ids(client, calls):
+    saga_id = _checkout(client).get_json()["saga_id"]
+    OutboxEvent.query.update({"published_at": outbox.datetime.now(outbox.timezone.utc)})
+    ids = sorted(e.id for e in OutboxEvent.query)
+    r = client.post(f"/api/order/sagas/{saga_id}/replay", headers=AUTH)
+    assert r.status_code == 200
+    assert r.get_json()["replayed"] == 3
+    assert sorted(e.id for e in OutboxEvent.query.filter(OutboxEvent.published_at.is_(None))) == ids
+
+
+def test_replay_is_only_for_your_own_checkout(client, calls, monkeypatch):
+    saga_id = _checkout(client).get_json()["saga_id"]
+    monkeypatch.setattr(clients, "current_user_id", lambda header: 2)
+    assert client.post(f"/api/order/sagas/{saga_id}/replay", headers=AUTH).status_code == 404
+
+
+def test_replay_is_off_unless_chaos_is_enabled(client, calls, monkeypatch):
+    saga_id = _checkout(client).get_json()["saga_id"]
+    monkeypatch.delenv("CHAOS_ENABLED")
+    assert client.post(f"/api/order/sagas/{saga_id}/replay", headers=AUTH).status_code == 403

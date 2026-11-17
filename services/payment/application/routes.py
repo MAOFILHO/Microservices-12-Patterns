@@ -4,7 +4,7 @@ from typing import Literal
 
 from flask import Blueprint, jsonify, make_response, request
 from pydantic import BaseModel, Field, ValidationError
-from shop_common.flask_support import chaos_enabled
+from shop_common.flask_support import DemoSwitch
 from sqlalchemy.exc import IntegrityError
 
 from . import db
@@ -16,9 +16,8 @@ payment_api = Blueprint("payment_api", __name__)
 # SLOW_SECONDS, longer than the order service waits). Held in memory: it is a lab switch, not data.
 # The switch makes charging sick, not settling: void and the list always answer, so the demo 13
 # page can show where the money is while payment is slow.
-MODES = ("healthy", "failing", "slow")
+SWITCH = DemoSwitch("healthy", "failing", "slow")
 SLOW_SECONDS = 3
-_mode = {"value": "healthy"}
 _ALWAYS_ANSWERS = {"payment_api.chaos", "payment_api.void", "payment_api.list_payments"}
 # Demo 13: a charge still PROCESSING after this long lost its process (a crash or restart), so a
 # void may cancel it. Far longer than any charge takes, slow mode included.
@@ -42,9 +41,9 @@ class ChargeRequest(VoidRequest):
 def _apply_chaos():
     if request.endpoint in _ALWAYS_ANSWERS:
         return None
-    if _mode["value"] == "failing":
+    if SWITCH.value == "failing":
         return make_response(jsonify({"message": "Payment is failing (demo switch)"}), 500)
-    if _mode["value"] == "slow" and request.endpoint != "payment_api.charge":  # charge() is slow itself
+    if SWITCH.value == "slow" and request.endpoint != "payment_api.charge":  # charge() is slow itself
         time.sleep(SLOW_SECONDS)
     return None
 
@@ -99,7 +98,7 @@ def charge():
         if (payment.order_id, payment.amount_cents) != (data.order_id, data.amount_cents):
             return make_response(jsonify({"message": "This key was already used for a different charge"}), 409)
         return jsonify({"result": payment.to_json()})
-    if _mode["value"] == "slow":
+    if SWITCH.value == "slow":
         time.sleep(SLOW_SECONDS)
     return jsonify({"result": _finish(payment, "DECLINED" if data.simulate == "decline" else "APPROVED").to_json()})
 
@@ -122,11 +121,4 @@ def void(key: str):
 
 @payment_api.route("/api/payment/chaos", methods=["GET", "POST"])
 def chaos():
-    if request.method == "POST":
-        if not chaos_enabled():
-            return make_response(jsonify({"message": "Chaos switches are off (CHAOS_ENABLED is not 1)"}), 403)
-        mode = (request.get_json(silent=True) or request.form.to_dict()).get("mode")
-        if mode not in MODES:
-            return make_response(jsonify({"message": f"mode must be one of {list(MODES)}"}), 400)
-        _mode["value"] = mode
-    return jsonify({"mode": _mode["value"], "modes": list(MODES), "enabled": chaos_enabled()})
+    return SWITCH.respond()
