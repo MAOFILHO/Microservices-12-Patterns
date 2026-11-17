@@ -17,7 +17,7 @@ def calls(monkeypatch):
     monkeypatch.setattr(clients, "product_prices", lambda: {1: 1299})
     monkeypatch.setattr(clients, "reserve_stock", lambda rid, oid, items: log.append(("reserve", rid)) or {})
     monkeypatch.setattr(clients, "release_stock", lambda rid: log.append(("release", rid)) or {})
-    monkeypatch.setattr(clients, "charge", lambda oid, amount, simulate="approve": log.append(("charge", simulate)) or {
+    monkeypatch.setattr(clients, "charge", lambda oid, amount, simulate="approve", **key: log.append(("charge", simulate)) or {
         "id": 9, "status": "DECLINED" if simulate == "decline" else "APPROVED"})
     clients.BREAKER.close()
     return log

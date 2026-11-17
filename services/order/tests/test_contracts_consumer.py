@@ -28,7 +28,8 @@ def test_order_to_payment_contract(monkeypatch):
         pact.upon_receiving("a charge for an order")
         .given("payment is healthy")
         .with_request("POST", "/api/payment/charge")
-        .with_body({"order_id": match.int(42), "amount_cents": match.int(2598)}, "application/json")
+        .with_body({"order_id": match.int(42), "amount_cents": match.int(2598), "idempotency_key": match.str("saga-42")},
+                   "application/json")
         .will_respond_with(200)
         .with_body({"result": {
             "id": match.int(1),
@@ -41,9 +42,26 @@ def test_order_to_payment_contract(monkeypatch):
         pact.upon_receiving("a charge the bank declines")
         .given("payment is healthy")
         .with_request("POST", "/api/payment/charge")
-        .with_body({"order_id": match.int(43), "amount_cents": match.int(899), "simulate": "decline"}, "application/json")
+        .with_body({"order_id": match.int(43), "amount_cents": match.int(899), "simulate": "decline",
+                    "idempotency_key": match.str("saga-43")}, "application/json")
         .will_respond_with(200)
         .with_body({"result": {"id": match.int(2), "status": "DECLINED"}}, "application/json")
+    )
+    (
+        pact.upon_receiving("a void for a charge that went through")
+        .given("a charge exists", idempotency_key="saga-42")
+        .with_request("POST", "/api/payment/charges/saga-42/void")
+        .with_body({"order_id": match.int(42), "amount_cents": match.int(2598)}, "application/json")
+        .will_respond_with(200)
+        .with_body({"result": {"id": match.int(1), "status": match.str("APPROVED")}}, "application/json")
+    )
+    (
+        pact.upon_receiving("a void for a charge payment never saw")
+        .given("payment is healthy")
+        .with_request("POST", "/api/payment/charges/saga-never-sent/void")
+        .with_body({"order_id": match.int(44), "amount_cents": match.int(500)}, "application/json")
+        .will_respond_with(200)
+        .with_body({"result": {"id": match.int(3), "status": "VOIDED"}}, "application/json")
     )
     (
         pact.upon_receiving("a health check through the circuit breaker")
@@ -54,10 +72,12 @@ def test_order_to_payment_contract(monkeypatch):
     )
     with pact.serve() as server:
         monkeypatch.setitem(clients.STATIC_URLS, "payment", str(server.url).rstrip("/"))
-        payment = clients.charge(42, 2598)
+        payment = clients.charge(42, 2598, idempotency_key="saga-42")
         assert payment["status"] == "APPROVED"
         assert payment["amount_cents"] == 2598
-        assert clients.charge(43, 899, "decline")["status"] == "DECLINED"
+        assert clients.charge(43, 899, "decline", idempotency_key="saga-43")["status"] == "DECLINED"
+        assert clients.void_charge("saga-42", 42, 2598)["status"] == "APPROVED"
+        assert clients.void_charge("saga-never-sent", 44, 500)["status"] == "VOIDED"
         assert clients.call_payment("GET", "/api/payment/ping").json() == {"status": "ok"}
     pact.write_file(PACT_DIR, overwrite=True)
 

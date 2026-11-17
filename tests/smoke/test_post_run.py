@@ -208,6 +208,52 @@ def test_declined_payment_is_compensated_and_stock_is_unchanged():
     assert httpx.get(f"{GATEWAY_URL}/api/shop/order", headers=headers).json()["result"]["is_open"] is True
 
 
+def test_demo_13_a_slow_payment_ends_as_one_charge_and_one_sale():
+    """Payment slows down mid-checkout: the order waits as pending, then settles as exactly 1 charge."""
+    _require_stack()
+    api = f"{GATEWAY_URL}/api/patterns/breaker"
+    headers = _login_with_cart()
+    before = _stock(1)
+    assert httpx.post(f"{api}/payment-mode", json={"mode": "slow"}).status_code == 200
+    try:
+        r = httpx.post(f"{GATEWAY_URL}/api/shop/order/checkout", headers=headers, timeout=15)
+    finally:
+        httpx.post(f"{api}/payment-mode", json={"mode": "healthy"})
+    assert r.status_code == 202, r.text  # the charge timed out and payment still says PROCESSING
+    saga_id = r.json()["saga_id"]
+    assert _stock(1)["reserved"] == before["reserved"] + 3  # held, not given away
+
+    def charges() -> list[dict]:
+        return [p for p in httpx.get(f"{GATEWAY_URL}/api/shop/payments").json()["results"] if p["idempotency_key"] == saga_id]
+
+    saga = lambda: httpx.get(f"{GATEWAY_URL}/api/shop/order/sagas", headers=headers).json()["results"][0]  # noqa: E731
+    assert _wait_for(lambda: saga()["outcome"] == "completed", seconds=15), saga()
+    assert [c["status"] for c in charges()] == ["APPROVED"]  # the retry did not charge twice
+    assert _wait_for(lambda: _stock(1)["on_hand"] == before["on_hand"] - 3), _stock(1)
+    assert _stock(1)["reserved"] == before["reserved"]
+
+
+def test_demo_13_a_charge_payment_never_took_is_voided_and_the_stock_goes_back():
+    """Payment fails every charge: the saga voids the key, so a late copy can never charge."""
+    _require_stack()
+    api = f"{GATEWAY_URL}/api/patterns/breaker"
+    headers = _login_with_cart()
+    before = _stock(1)
+    assert httpx.post(f"{api}/payment-mode", json={"mode": "failing"}).status_code == 200
+    try:
+        r = httpx.post(f"{GATEWAY_URL}/api/shop/order/checkout", headers=headers, timeout=15)
+    finally:
+        httpx.post(f"{api}/payment-mode", json={"mode": "healthy"})
+    assert r.status_code == 503, r.text
+    saga_id = r.json()["saga_id"]
+    payments = httpx.get(f"{GATEWAY_URL}/api/shop/payments").json()["results"]
+    assert [p["status"] for p in payments if p["idempotency_key"] == saga_id] == ["VOIDED"]
+    assert _stock(1) == before
+    assert httpx.get(f"{GATEWAY_URL}/api/shop/order", headers=headers).json()["result"]["is_open"] is True
+    # The failed charges count toward a breaker: one good call per replica resets the count.
+    assert _wait_for(lambda: {httpx.get(f"{api}/call").json()["outcome"] for _ in range(2)} == {"ok"}, seconds=20)
+
+
 def test_events_wait_in_the_outbox_while_the_bus_is_down_then_drain():
     _require_stack()
     api = f"{GATEWAY_URL}/api/patterns/events"

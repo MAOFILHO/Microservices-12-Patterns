@@ -30,5 +30,9 @@ def create_app(config_name: str | None = None) -> Flask:
 
         app.register_blueprint(payment_api)
         db.create_all()
+        # Demo 13 added payment.idempotency_key: a database made before it keeps its rows.
+        from shop_common.db_setup import add_missing_columns
+
+        add_missing_columns(db)
         install_observability(app, "payment", db)
         return app

@@ -108,11 +108,28 @@ def call_payment(method: str, path: str, json: dict | None = None) -> requests.R
         raise PaymentUnavailable("failed")
 
 
-def charge(order_id: int, amount_cents: int, simulate: str = "approve") -> dict:
-    body = {"order_id": order_id, "amount_cents": amount_cents}
+def charge(order_id: int, amount_cents: int, simulate: str = "approve", *, idempotency_key: str) -> dict:
+    """The retry above resends this same body, key included, so payment charges at most once (demo 13)."""
+    body = {"order_id": order_id, "amount_cents": amount_cents, "idempotency_key": idempotency_key}
     if simulate != "approve":
         body["simulate"] = simulate
     response = call_payment("POST", "/api/payment/charge", body)
+    response.raise_for_status()
+    return response.json()["result"]
+
+
+VOID_TIMEOUT_SECONDS = 2.0
+
+
+def void_charge(idempotency_key: str, order_id: int, amount_cents: int) -> dict:
+    """Demo 13: cancels this key unless the charge went through, and returns the charge as it now
+    stands (status APPROVED, DECLINED, VOIDED or PROCESSING). Once VOIDED, a late copy of the
+    charge is refused. Raises requests.RequestException when payment does not answer.
+
+    Not behind the breaker: it is one light call, and its answer is what lets the saga undo safely.
+    """
+    response = requests.post(f"{base_url('payment')}/api/payment/charges/{idempotency_key}/void",
+                             json={"order_id": order_id, "amount_cents": amount_cents}, timeout=VOID_TIMEOUT_SECONDS)
     response.raise_for_status()
     return response.json()["result"]
 

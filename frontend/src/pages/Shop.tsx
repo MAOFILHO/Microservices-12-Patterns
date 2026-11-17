@@ -121,8 +121,12 @@ export default function Shop() {
     setCartError(null);
     setCheckoutMessage(null);
     try {
-      const { result } = await shopApi.checkout(auth.token);
-      setCart(result);
+      const answer = await shopApi.checkout(auth.token);
+      if (answer.pending || !answer.result) {
+        setCheckoutMessage(answer.message ?? "Your order is pending.");
+        return;
+      }
+      setCart(answer.result);
       setCheckoutMessage("Order placed! Thank you.");
     } catch (err) {
       setCartError(String(err));

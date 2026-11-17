@@ -93,3 +93,17 @@ class CheckoutLock(db.Model):
     order_id = db.Column(db.Integer, primary_key=True, autoincrement=False)
     saga_id = db.Column(db.String(36), nullable=False)
     started_at = db.Column(db.DateTime, nullable=False, default=_utcnow)
+
+
+class PendingPayment(db.Model):
+    """Demo 13: a checkout whose charge timed out and whose outcome payment could not yet tell.
+    The stock stays held and the order cannot be checked out or changed until reconcile.py settles
+    it. A row is deleted by whoever settles it, so two replicas cannot settle it twice."""
+
+    __tablename__ = "pending_payment"
+
+    saga_id = db.Column(db.String(36), primary_key=True)  # also the charge's idempotency key
+    order_id = db.Column(db.Integer, nullable=False, unique=True)
+    user_id = db.Column(db.Integer, nullable=False)
+    amount_cents = db.Column(db.Integer, nullable=False)
+    since = db.Column(db.DateTime, nullable=False, default=_utcnow)

@@ -11,6 +11,7 @@ import DatabasePerServiceDemo from "../patterns/demos/DatabasePerServiceDemo";
 import ObservabilityDemo from "../patterns/demos/ObservabilityDemo";
 import SagaDemo from "../patterns/demos/SagaDemo";
 import ServiceDiscoveryDemo from "../patterns/demos/ServiceDiscoveryDemo";
+import SlowPaymentDemo from "../patterns/demos/SlowPaymentDemo";
 import StatelessDemo from "../patterns/demos/StatelessDemo";
 import { PATTERNS } from "../patterns/content";
 
@@ -27,6 +28,7 @@ const DEMOS: Record<string, () => ReactNode> = {
   saga: () => <SagaDemo />,
   containerization: () => <ContainerizationDemo />,
   "ci-cd-pipeline": () => <CiCdDemo />,
+  "slow-payment": () => <SlowPaymentDemo />,
 };
 
 export default function PatternPage() {

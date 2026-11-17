@@ -6,7 +6,8 @@ can click.
 
 > **Status: complete.** All 12 patterns are live, each with a working demo, locally and in one
 > real Azure run: provision, deploy through GitHub Actions with OIDC, smoke tests, screenshots,
-> teardown. The foundation is copied from
+> teardown. Demo 13, a slow payment in the middle of checkout, came from a reader's comment on
+> the project's LinkedIn post. The foundation is copied from
 > [Azure-Ecommerce-Monolith-Microservices-Migration](https://github.com/MAOFILHO/Azure-Ecommerce-Monolith-Microservices-Migration).
 
 ## Project summary
@@ -25,15 +26,16 @@ React frontend with one page per pattern. Every demo calls the real services: no
 | M2: resilience and independence | 4, 10, 11, 12 | [#3](https://github.com/MAOFILHO/Microservices-12-Patterns/pull/3) |
 | M3a: async and packaging | 7, 8, 9 | [#4](https://github.com/MAOFILHO/Microservices-12-Patterns/pull/4) |
 | M3b: delivery and the Azure run | 3 | [#12](https://github.com/MAOFILHO/Microservices-12-Patterns/pull/12), [#13](https://github.com/MAOFILHO/Microservices-12-Patterns/pull/13), [#14](https://github.com/MAOFILHO/Microservices-12-Patterns/pull/14) |
+| Demo 13: a slow payment mid-checkout | 4 and 8, under a timeout | [#16](https://github.com/MAOFILHO/Microservices-12-Patterns/pull/16) |
 
 M3b was planned as 7 GitHub issues ([#5 to #11](https://github.com/MAOFILHO/Microservices-12-Patterns/issues?q=is%3Aissue)),
 all closed.
 
 **How it was checked.**
-- **155 unit tests** across 8 suites, each in its own virtualenv, built test-first from M3a on.
+- **181 unit tests** across 8 suites, each in its own virtualenv, built test-first from M3a on.
 - **Pact contract tests**: the order service's contracts with payment, catalog and inventory,
   verified against the real providers in CI.
-- **23 local smoke tests** against the running stack, and **4 Azure smoke tests** against the real
+- **25 local smoke tests** against the running stack, and **4 Azure smoke tests** against the real
   deployment.
 - **CI on every pull request** runs only what the change touches; every image is built for
   linux/amd64, started, and rejected if it runs as root. `main` requires the "CI ok" check.
@@ -59,6 +61,7 @@ or the cheapest SKUs, with a $25/month budget alert, then torn down and verified
 | 10 | [Stateless Services](#10-stateless-services) | Stores session data outside the service | M2 |
 | 11 | [Contract Testing](#11-contract-testing) | Checks that APIs stay compatible across services | M2 |
 | 12 | [Service Discovery](#12-service-discovery) | Finds service instances automatically at runtime | M2 |
+| 13 | [Saga under a slow payment](#13-saga-under-a-slow-payment) | Follows the money and the stock when payment times out mid-checkout | Demo 13 |
 
 ## Architecture
 
@@ -190,6 +193,25 @@ The live registry. Stop an instance: its heartbeat stops, the registry expires i
 `make run` restarts it 20 s later, when it registers again.
 
 <img width="100%" alt="Service Discovery demo: registry table and an expired then re-registered order replica" src="docs/screenshots/p12-service-discovery.jpg" />
+
+### 13. Saga under a slow payment
+A declined card is the easy case. The hard one is a timeout: the charge call runs long, the
+breaker counts a failure, and a saga that releases the stock now may leave a customer charged
+with no order, or charged twice by the retry. Two fixes, both suggested by a reader:
+
+- **An idempotency key on every charge** (the saga id). The retry sends the same key, so payment
+  returns the first charge instead of making a second one.
+- **A status check before any undo.** The saga voids the key with payment, which answers how the
+  charge stands. APPROVED confirms the order; DECLINED releases the stock; a charge payment never
+  saw becomes VOIDED, so a late copy of it is refused. PROCESSING or no answer leaves the order
+  **pending**, stock held, until a background check (every 5 s) settles it. A charge stuck in
+  PROCESSING for 30 s is voided, so no order waits forever.
+
+Make payment slow, buy 2 mugs, and follow the money and the stock. Here the charge call timed out,
+payment still said PROCESSING, so the order waited; 5 s later it settled as 1 charge, 1 order,
+2 mugs sold.
+
+<img width="100%" alt="Demo 13: payment slowed mid-checkout; the order waits as pending, then settles as 1 charge, 1 order, 2 mugs sold" src="docs/screenshots/p13-slow-payment.jpg" />
 
 ## Run locally (no Docker)
 

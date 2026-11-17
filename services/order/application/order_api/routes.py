@@ -37,6 +37,8 @@ def order_add_item():
 
     # The cart lives in the order database, not in this process (pattern 10): any replica sees it.
     known_order = Order.query.filter_by(user_id=u_id, is_open=True).first()
+    if known_order is not None and saga.is_pending(known_order.id):  # demo 13: the charge may have happened
+        return make_response(jsonify({"message": saga.PENDING_MESSAGE, "pending": True}), 409)
     if known_order is None:
         known_order = Order(user_id=u_id, is_open=True)
         known_order.items.append(OrderItem(data.product_id, data.qty))

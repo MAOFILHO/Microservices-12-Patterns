@@ -90,8 +90,9 @@ export const shopApi = {
       headers: authHeaders(token),
     }),
 
+  // 200 has the closed order. 202 means payment was too slow to tell (demo 13): the order waits as pending.
   checkout: (token: string) =>
-    request<{ result: Order }>(`/api/shop/order/checkout`, {
+    request<{ result?: Order; pending?: boolean; message?: string }>(`/api/shop/order/checkout`, {
       method: "POST",
       headers: authHeaders(token),
     }),
@@ -249,7 +250,7 @@ export interface SagaStep {
 export interface SagaRun {
   saga_id: string;
   order_id: number;
-  outcome: "completed" | "compensated" | "failed";
+  outcome: "completed" | "compensated" | "failed" | "pending";
   steps: SagaStep[];
 }
 
@@ -295,7 +296,7 @@ export interface RuntimeInfo {
 
 export const asyncApi = {
   checkout: (token: string, simulateDecline: boolean) =>
-    getAny<{ message?: string; saga_id?: string; failed_step?: string }>("/api/shop/order/checkout", {
+    getAny<{ message?: string; saga_id?: string; failed_step?: string; pending?: boolean }>("/api/shop/order/checkout", {
       method: "POST",
       headers: { ...authHeaders(token), "Content-Type": "application/json" },
       body: JSON.stringify({ simulate_decline: simulateDecline }),
@@ -310,7 +311,19 @@ export const asyncApi = {
       body: JSON.stringify({ connected }),
     }),
   runtime: () => request<{ processes: RuntimeInfo[] }>("/api/patterns/runtime"),
+  payments: () => request<{ results: PaymentRow[] }>("/api/shop/payments"),
 };
+
+// --- Demo 13: a slow payment mid-checkout --------------------------------------------------------
+
+export interface PaymentRow {
+  id: number;
+  order_id: number;
+  amount_cents: number;
+  status: "PROCESSING" | "APPROVED" | "DECLINED" | "VOIDED" | string;
+  idempotency_key: string | null;
+  created_at: string | null;
+}
 
 // --- M3b demo endpoint (pattern 3) ---------------------------------------------------------------
 
