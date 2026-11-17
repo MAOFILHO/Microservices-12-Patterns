@@ -254,6 +254,68 @@ def test_demo_13_a_charge_payment_never_took_is_voided_and_the_stock_goes_back()
     assert _wait_for(lambda: {httpx.get(f"{api}/call").json()["outcome"] for _ in range(2)} == {"ok"}, seconds=20)
 
 
+def _inventory_mode(mode: str) -> None:
+    assert httpx.post(f"{GATEWAY_URL}/api/shop/inventory/chaos", json={"mode": mode}).status_code == 200
+
+
+def _hold(saga_id: str) -> dict | None:
+    holds = httpx.get(f"{GATEWAY_URL}/api/shop/inventory/reservations").json()["results"]
+    return next((h for h in holds if h["reservation_id"] == saga_id), None)
+
+
+def test_demo_14_a_release_that_beats_its_slow_hold_leaves_the_stock_untouched():
+    _require_stack()
+    import time
+
+    headers = _login_with_cart()
+    before = _stock(1)
+    _inventory_mode("slow_reserve")
+    try:
+        sent = time.monotonic()
+        r = httpx.post(f"{GATEWAY_URL}/api/shop/order/checkout", headers=headers, timeout=15)
+        assert r.status_code == 503, r.text  # the saga gave up on the hold after 3 s
+        time.sleep(max(0.0, sent + 8 - time.monotonic()))  # past the late hold, which lands at about 6 s
+    finally:
+        _inventory_mode("healthy")
+    hold = _hold(r.json()["saga_id"])
+    assert hold is not None and hold["status"] == "RELEASED" and hold["items"] == [], hold
+    assert _stock(1) == before
+
+
+def test_demo_14_a_release_that_times_out_and_arrives_twice_counts_once():
+    _require_stack()
+    headers = _login_with_cart()
+    before = _stock(1)
+    _inventory_mode("slow_release")
+    try:
+        r = httpx.post(f"{GATEWAY_URL}/api/shop/order/checkout", json={"simulate_decline": True}, headers=headers, timeout=15)
+        assert r.status_code == 402, r.text
+        saga_id = r.json()["saga_id"]
+        assert _wait_for(lambda: (_hold(saga_id) or {}).get("status") == "RELEASED")  # the event copy
+    finally:
+        _inventory_mode("healthy")
+    assert _wait_for(lambda: _hold(saga_id)["releases_received"] == 2), _hold(saga_id)  # the direct call, at 6 s
+    assert _stock(1) == before
+
+
+def test_demo_14_replayed_events_are_skipped_and_the_sale_counts_once():
+    _require_stack()
+    headers = _login_with_cart()
+    before = _stock(1)
+    r = httpx.post(f"{GATEWAY_URL}/api/shop/order/checkout", headers=headers, timeout=15)
+    assert r.status_code == 200, r.text
+    assert _wait_for(lambda: _stock(1)["on_hand"] == before["on_hand"] - 3)
+    sold = _stock(1)
+    counts = lambda: httpx.get(f"{GATEWAY_URL}/api/shop/inventory/events").json()  # noqa: E731
+    start = counts()
+    replay = httpx.post(f"{GATEWAY_URL}/api/shop/order/sagas/{r.json()['saga_id']}/replay", headers=headers)
+    assert replay.json()["replayed"] == 3, replay.text
+    # OrderConfirmed again: skipped, not sold twice. StockReserved and PaymentCharged: ignored.
+    assert _wait_for(lambda: counts()["duplicates_skipped"] >= start["duplicates_skipped"] + 1)
+    assert _wait_for(lambda: counts()["not_handled"] >= start["not_handled"] + 2)
+    assert _stock(1) == sold
+
+
 def test_events_wait_in_the_outbox_while_the_bus_is_down_then_drain():
     _require_stack()
     api = f"{GATEWAY_URL}/api/patterns/events"

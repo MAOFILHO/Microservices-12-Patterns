@@ -349,3 +349,38 @@ export interface DeliveryView {
 export const deliveryApi = {
   view: () => request<DeliveryView>("/api/patterns/delivery"),
 };
+
+// --- Demo 14: compensation under timeouts and duplicate events -----------------------------------
+
+export interface HoldRow {
+  reservation_id: string;
+  order_id: number;
+  status: "RESERVED" | "SOLD" | "RELEASED" | string;
+  items: { product_id: number; quantity: number }[];
+  releases_received: number;
+}
+
+export interface HandledEvent {
+  event_id: string;
+  type: string;
+  reservation_id: string | null;
+  outcome: string;
+}
+
+export const compensationApi = {
+  inventoryMode: () => request<{ mode: string; enabled: boolean }>("/api/shop/inventory/chaos"),
+  setInventoryMode: (mode: string) =>
+    getAny<{ mode?: string; message?: string }>("/api/shop/inventory/chaos", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ mode }),
+    }),
+  holds: () => request<{ results: HoldRow[] }>("/api/shop/inventory/reservations"),
+  handled: () =>
+    request<{ results: HandledEvent[]; duplicates_skipped: number; not_handled: number }>("/api/shop/inventory/events"),
+  replay: (token: string, sagaId: string) =>
+    getAny<{ replayed?: number; message?: string }>(`/api/shop/order/sagas/${sagaId}/replay`, {
+      method: "POST",
+      headers: authHeaders(token),
+    }),
+};

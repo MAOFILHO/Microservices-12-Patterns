@@ -8,13 +8,18 @@ from . import db, stock
 from .models import ConsumedEvent
 
 HANDLERS = {"OrderConfirmed": stock.commit, "StockReleaseRequested": stock.release}
+# Demo 14: what this process did with events it did not act on. In memory: demo counters, not data.
+# duplicates_skipped: an event id it already acted on. not_handled: a type that is not inventory's.
+counts = {"duplicates_skipped": 0, "not_handled": 0}
 
 
 def handle(event: dict) -> None:
     action = HANDLERS.get(event.get("type"))
     if action is None:
+        counts["not_handled"] += 1
         return
     if db.session.get(ConsumedEvent, event["event_id"]) is not None:
+        counts["duplicates_skipped"] += 1
         return  # seen before: at-least-once delivery sent it twice
     reservation_id = event["payload"].get("reservation_id")
     # action() commits on its own. If we crash before the ConsumedEvent row below, the event is

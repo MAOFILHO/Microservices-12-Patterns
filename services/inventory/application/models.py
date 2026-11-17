@@ -29,6 +29,10 @@ def _utcnow():
     return datetime.now(timezone.utc)
 
 
+# Demo 14: the order id of a hold recorded only by its release (the hold itself never arrived).
+NEVER_HELD = 0
+
+
 class Reservation(db.Model):
     """Stock held for one checkout attempt (pattern 8). Keyed by the order service's saga id, so a
     retried request or a redelivered event finds the same row instead of holding stock twice."""
@@ -39,6 +43,8 @@ class Reservation(db.Model):
     order_id = db.Column(db.Integer, nullable=False, index=True)
     items = db.Column(db.JSON, nullable=False)  # [{"product_id": 1, "quantity": 2}]
     status = db.Column(db.String(10), nullable=False)  # RESERVED -> SOLD | RELEASED
+    # Demo 14: how many release requests arrived (a direct call and its event copy can both come).
+    releases_received = db.Column(db.Integer, nullable=True, default=0)
     created_at = db.Column(db.DateTime, default=_utcnow)
     updated_at = db.Column(db.DateTime, default=_utcnow, onupdate=_utcnow)
 
@@ -48,6 +54,7 @@ class Reservation(db.Model):
             "order_id": self.order_id,
             "items": self.items,
             "status": self.status,
+            "releases_received": self.releases_received or 0,
             "updated_at": self.updated_at.isoformat() if self.updated_at else None,
         }
 
