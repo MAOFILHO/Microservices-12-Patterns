@@ -7,6 +7,12 @@
                        outbox. Inventory turns the hold into a sale when it reads that event (7).
     Any failure: event CheckoutFailed. One checkout per order at a time (checkout_lock).
 
+Demo 13, a charge that times out: the customer may have been charged. The charge carries the saga
+id as its idempotency key, so the retry cannot charge twice. Before it undoes anything, the saga
+voids that key with payment, which answers how the charge stands (settle_charge). APPROVED
+confirms the order; DECLINED or VOIDED (never arrived, and now never will) releases the stock;
+PROCESSING or no answer leaves the order pending, with the stock held, until reconcile.py settles it.
+
 If a later step fails, the earlier steps are undone in reverse order. Only step 2 changes another
 service's data, so the only compensation is releasing the stock. If that direct call fails too,
 a StockReleaseRequested event goes to the outbox, so inventory releases it once it can.
@@ -21,13 +27,13 @@ import requests
 from sqlalchemy.exc import IntegrityError
 
 from . import db
-from .models import CheckoutLock, Order, OutboxEvent, SagaStep
+from .models import CheckoutLock, Order, OutboxEvent, PendingPayment, SagaStep
 from .order_api.api import clients
 
 
 class Saga:
-    def __init__(self, order: Order, user_id: int):
-        self.id = str(uuid.uuid4())
+    def __init__(self, order: Order, user_id: int, saga_id: str | None = None):
+        self.id = saga_id or str(uuid.uuid4())
         self.order = order
         self.user_id = user_id
 
@@ -85,11 +91,17 @@ def _release_lock(order_id: int) -> None:
         db.session.commit()
 
 
+PENDING_MESSAGE = ("Your last checkout is still waiting for payment. It is confirmed, or the stock released, "
+                   "as soon as payment answers.")
+
+
 def run_checkout(order: Order, user_id: int, simulate: str = "approve") -> tuple[int, dict]:
     saga = Saga(order, user_id)
     if not _acquire_lock(order, saga.id):
         return 409, {"message": "A checkout for this order is already in progress."}
     try:
+        if is_pending(order.id):
+            return 409, {"message": PENDING_MESSAGE, "pending": True}
         return _run_steps(saga, simulate)
     finally:
         _release_lock(order.id)
@@ -128,34 +140,75 @@ def _run_steps(saga: Saga, simulate: str) -> tuple[int, dict]:
     saga.log("reserve_stock", "done", f"held {units} unit(s)", event="StockReserved",
              payload={"reservation_id": saga.id, "items": items})
 
-    # 3. charge payment (behind the M2 circuit breaker)
+    # 3. charge payment (behind the M2 circuit breaker), keyed by the saga id (demo 13)
     try:
-        payment = clients.charge(order.id, amount, simulate)
+        payment = clients.charge(order.id, amount, simulate, idempotency_key=saga.id)
     except clients.PaymentUnavailable as exc:
-        breaker = clients.breaker_state()
         if exc.reason == "open":  # the breaker refused the call: payment was never contacted
+            breaker = clients.breaker_state()
             wait = f" Try again in {breaker['retry_in_seconds']:.0f} s." if breaker["retry_in_seconds"] else ""
-            message = f"Payment is unavailable right now, so nothing was charged; the stock was released. {kept}{wait}"
-        else:  # timeout or 5xx: the charge may or may not have happened
-            message = f"Payment could not be confirmed, so the order was not placed and the stock was released. {kept}"
-        return saga.fail("charge_payment", f"payment unavailable ({exc.reason})", 503, message,
-                         compensate=True, breaker=breaker)
+            return saga.fail("charge_payment", "payment unavailable (open)", 503,
+                             f"Payment is unavailable right now, so nothing was charged; the stock was released. {kept}{wait}",
+                             compensate=True, breaker=breaker)
+        return _charge_unknown(saga, amount, f"payment unavailable ({exc.reason})")
     except requests.RequestException as exc:
-        return saga.fail("charge_payment", f"payment error: {exc.__class__.__name__}", 502,
-                         f"Payment could not be confirmed, so the order was not placed and the stock was released. {kept}",
-                         compensate=True)
+        return _charge_unknown(saga, amount, f"payment error: {exc.__class__.__name__}")
+    if payment["status"] == "PROCESSING":  # a retry answered while the first try is still running
+        return _charge_unknown(saga, amount, "payment still processing")
     if payment["status"] != "APPROVED":
         return saga.fail("charge_payment", "declined", 402,
                          f"Your payment was declined. Nothing was charged; the stock was released. {kept}",
                          compensate=True)
-    saga.log("charge_payment", "done", f"payment {payment['id']} APPROVED, {amount} cents", event="PaymentCharged",
-             payload={"payment_id": payment["id"], "amount_cents": amount})
+    return _confirm(saga, amount, payment, "charge_payment")
 
-    # 4. confirm: the order change, its log line and its event commit together, or not at all
+
+def _confirm(saga: Saga, amount: int, payment: dict, step: str) -> tuple[int, dict]:
+    """The charge went through: record it, then 4. confirm. The order change, its log line and its
+    event commit together, or not at all."""
+    order = saga.order
+    items = [{"product_id": i.product_id, "quantity": i.quantity} for i in order.items]
+    saga.log(step, "done", f"payment {payment['id']} APPROVED, {amount} cents", event="PaymentCharged",
+             payload={"payment_id": payment["id"], "amount_cents": amount})
     order.is_open = False
     saga.log("confirm", "done", "order closed; OrderConfirmed in the outbox", event="OrderConfirmed",
              payload={"reservation_id": saga.id, "amount_cents": amount, "items": items})
     return 200, {"result": order.to_json(), "payment": payment, "saga_id": saga.id}
+
+
+def _charge_unknown(saga: Saga, amount: int, detail: str) -> tuple[int, dict]:
+    """Demo 13: the charge call failed after it may have reached payment, so the customer may have
+    been charged. Void the key first: payment then says how the charge stands."""
+    saga.log("charge_payment", "timed_out", f"{detail}; asking payment what happened")
+    try:
+        charge = clients.void_charge(saga.id, saga.order.id, amount)
+    except requests.RequestException as exc:
+        charge = {"status": f"no answer ({exc.__class__.__name__})"}
+    return settle_charge(saga, amount, charge)
+
+
+def settle_charge(saga: Saga, amount: int, charge: dict) -> tuple[int, dict]:
+    """How payment says the saga's charge stands decides the outcome (also used by reconcile.py)."""
+    status = charge["status"]
+    kept = "Your cart is kept."
+    if status == "APPROVED":
+        return _confirm(saga, amount, charge, "check_payment")
+    if status == "DECLINED":
+        return saga.fail("check_payment", "payment says DECLINED", 402,
+                         f"Your payment was declined. Nothing was charged; the stock was released. {kept}",
+                         compensate=True)
+    if status == "VOIDED":
+        return saga.fail("check_payment", "payment never took the charge; its key is now void", 503,
+                         f"Payment did not go through. Nothing was charged; the stock was released. {kept}",
+                         compensate=True)
+    db.session.add(PendingPayment(saga_id=saga.id, order_id=saga.order.id, user_id=saga.user_id, amount_cents=amount))
+    saga.log("check_payment", "pending", f"payment says {status}; the order waits, the stock stays held")
+    return 202, {"message": "Payment is taking longer than usual. Your order is pending: it is confirmed, or the "
+                            "stock released, as soon as payment answers. You cannot be charged twice.",
+                 "saga_id": saga.id, "pending": True}
+
+
+def is_pending(order_id: int) -> bool:
+    return PendingPayment.query.filter_by(order_id=order_id).first() is not None
 
 
 def _compensate(saga: Saga) -> None:
@@ -176,7 +229,8 @@ def recent_sagas(user_id: int, limit: int = 5) -> list[dict]:
     for saga_id in saga_ids:
         steps = SagaStep.query.filter_by(saga_id=saga_id).order_by(SagaStep.id).all()
         statuses = {s.status for s in steps}
-        outcome = "compensated" if "compensated" in statuses else "failed" if "failed" in statuses else "completed"
+        outcome = ("compensated" if "compensated" in statuses else "failed" if "failed" in statuses
+                   else "pending" if steps[-1].status == "pending" else "completed")
         result.append({"saga_id": saga_id, "order_id": steps[0].order_id, "outcome": outcome,
                        "steps": [s.to_json() for s in steps]})
     return result

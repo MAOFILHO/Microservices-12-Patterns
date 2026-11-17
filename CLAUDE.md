@@ -27,7 +27,7 @@ history, monolith dropped). The full agreed plan is in [`docs/PLAN.md`](docs/PLA
 - Name prefix: `ms12p` (parent uses `flaskms`). Teardown deletes the whole resource group, so a
   shared name would delete the other project.
 
-## Current state (complete: 12 of 12 live; one Azure run done and torn down, #11)
+## Current state (complete: 12 of 12 live, plus demo 13; one Azure run done and torn down, #11)
 - Folders: `services/{user,catalog,order,payment,inventory}/` (Flask, one DB each), `gateway/`
   (FastAPI), `registry/` (FastAPI), `shared/` (`shop_common`), `contracts/`, `frontend/`, `infra/`,
   `scripts/`, `tests/`.
@@ -41,6 +41,14 @@ history, monolith dropped). The full agreed plan is in [`docs/PLAN.md`](docs/PLA
   charge_payment, confirm; compensation releases the hold (or emits StockReleaseRequested). Steps in
   `saga_step`; holds keyed by saga id in inventory's `reservation`. `{"simulate_decline": true}` on
   checkout makes payment answer DECLINED (200, not a breaker failure).
+- Demo 13 (slow payment, from a LinkedIn comment): every charge carries `idempotency_key` = saga id
+  (payment's `payment.idempotency_key`, unique; old DBs gain it via `shop_common.db_setup.add_missing_columns`).
+  Payment records PROCESSING before the slow part; a reused key with another amount answers 409.
+  After a timeout the saga calls `POST /api/payment/charges/<key>/void` (exempt from chaos): an unseen key
+  becomes VOIDED (a late charge then gets VOIDED back), PROCESSING older than 30 s is voided, others
+  are returned as they are. `saga.settle_charge`: APPROVED confirms, DECLINED 402, VOIDED 503 (both
+  release), PROCESSING/no answer writes `pending_payment` (checkout and add-item answer 409) and returns 202;
+  `reconcile.py` settles pending rows every 5 s (deleting and committing the row is the claim). Page `/patterns/slow-payment`.
 - Events (pattern 7): `shop_common/events.py` (Redis Stream `shop.events`, consumer groups, at least
   once). Order writes `outbox_event` in the same transaction; `outbox.py` relays every 1 s; inventory's
   `consumer.py` commits the hold on OrderConfirmed and dedupes via `consumed_event`. `POST /debug/bus`

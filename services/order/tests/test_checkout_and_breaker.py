@@ -46,18 +46,19 @@ def test_breaker_opens_after_three_failures_then_fails_fast(client):
     assert 0 < body["breaker"]["retry_in_seconds"] <= clients.RESET_SECONDS
 
 
-def test_checkout_keeps_the_cart_when_payment_is_down(client):
+def test_checkout_waits_as_pending_when_payment_is_down(client):
+    """Payment at :9 refuses the charge and the void: nobody can say whether it was charged."""
     _cart(client)
     r = client.post("/api/order/checkout", headers=AUTH)
-    assert r.status_code == 503
-    assert "Your cart is kept" in r.get_json()["message"]
+    assert r.status_code == 202
+    assert r.get_json()["pending"] is True
     assert client.get("/api/order", headers=AUTH).get_json()["result"]["is_open"] is True
 
 
 def test_checkout_charges_the_catalog_price_and_closes_the_order(client, monkeypatch):
     charged = {}
 
-    def fake_charge(order_id, amount_cents, simulate="approve"):
+    def fake_charge(order_id, amount_cents, simulate="approve", *, idempotency_key):
         charged.update(order_id=order_id, amount_cents=amount_cents)
         return {"id": 1, "order_id": order_id, "amount_cents": amount_cents, "status": "APPROVED"}
 
@@ -92,8 +93,8 @@ def test_a_payment_timeout_never_claims_nothing_was_charged(client):
     """Payment at :9 refuses the call, which looks like a timeout: the charge state is unknown."""
     _cart(client)
     message = client.post("/api/order/checkout", headers=AUTH).get_json()["message"]
-    assert "could not be confirmed" in message
-    assert "nothing was charged" not in message
+    assert "pending" in message
+    assert "nothing was charged" not in message.lower()
 
 
 def test_an_open_breaker_does_say_nothing_was_charged(client):

@@ -279,6 +279,30 @@ export const PATTERNS: PatternInfo[] = [
     ],
     source: { label: "microservices.io — Client-side service discovery", url: "https://microservices.io/patterns/client-side-discovery.html" },
   },
+  {
+    n: 13,
+    slug: "slow-payment",
+    name: "Saga under a slow payment",
+    what: "Follows the money and the stock when payment times out mid-checkout.",
+    milestone: "M3",
+    live: true,
+    problem:
+      "A declined card is the easy case: the answer is clear and the stock goes back. A timeout is the hard one. The charge call runs long, the breaker counts a failure, the saga releases the stock, and the customer was charged anyway. A retry can even charge them twice.",
+    inThisProject: [
+      "Every charge carries an idempotency key: the saga id, one per checkout attempt. The retry sends the same key, so payment returns the first charge instead of making a second one.",
+      "Payment records a charge as PROCESSING when it arrives, before the slow part, so a check made meanwhile sees it in flight. A reused key with a different amount is refused.",
+      "Before any undo, the saga voids the key with payment, which answers how the charge stands. APPROVED confirms the order. DECLINED releases the stock. A charge payment never saw is recorded as VOIDED, so a late copy of it can never be charged.",
+      "PROCESSING or no answer: the order waits as pending, with the stock held. It cannot be checked out again or changed, so a second attempt cannot charge.",
+      "Every 5 s, each order replica asks payment about pending orders and settles them by the same rules. Deleting the pending row is the claim, so 2 replicas cannot settle one twice. A charge stuck in PROCESSING for 30 s lost its process, so payment voids it and no order waits forever.",
+      "Raised by a reader of the project's LinkedIn post, who named both fixes.",
+    ],
+    whenNotToUse: [
+      "Idempotency keys are not optional for anything that moves money. What varies is the key: one per attempt (as here) lets a declined card be retried.",
+      "A pending state is honest but costs the shopper a wait. Use it only where guessing is worse, as with money.",
+      "\"Never seen\" is final only because payment records a charge on arrival. A provider that does not must also offer a way to refuse a key before the saga releases the stock.",
+    ],
+    source: { label: "Stripe — Idempotent requests", url: "https://docs.stripe.com/api/idempotent_requests" },
+  },
 ];
 
 export const SERVICE_NAMES = ["gateway", "user", "catalog", "order", "payment", "inventory"] as const;

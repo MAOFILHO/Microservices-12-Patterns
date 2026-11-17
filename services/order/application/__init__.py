@@ -48,4 +48,9 @@ def create_app(config_name: str | None = None) -> Flask:
         from .outbox import start as start_outbox_relay
 
         start_outbox_relay(app, instance_id("order"))
+
+        # Demo 13: settle checkouts left pending by a slow payment.
+        from .reconcile import start as start_reconciler
+
+        start_reconciler(app)
         return app

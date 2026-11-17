@@ -2,14 +2,15 @@ import { Link } from "react-router-dom";
 import { PATTERNS } from "../patterns/content";
 
 export default function Patterns() {
-  const liveCount = PATTERNS.filter((p) => p.live).length;
+  const patterns = PATTERNS.filter((p) => p.n <= 12); // demo 13 is a bonus, not a 13th pattern
+  const liveCount = patterns.filter((p) => p.live).length;
   return (
     <div className="grid" style={{ gap: "1.5rem" }}>
       <section className="card">
-        <h1>The 12 patterns</h1>
+        <h1>The 12 patterns, plus demo 13</h1>
         <p className="muted">
           Each pattern has a page that explains it, says when not to use it, and runs a live demo against the real
-          services. {liveCount} of 12 are live; every one has a working demo.
+          services. {liveCount} of {patterns.length} are live. Demo 13 puts patterns 4 and 8 under a slow payment.
         </p>
       </section>
       <div className="grid cols-3">

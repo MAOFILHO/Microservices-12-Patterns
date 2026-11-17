@@ -15,6 +15,7 @@
         "body": {
           "content": {
             "amount_cents": 2598,
+            "idempotency_key": "saga-42",
             "order_id": 42
           },
           "contentType": "application/json",
@@ -32,6 +33,14 @@
               "matchers": [
                 {
                   "match": "integer"
+                }
+              ]
+            },
+            "$.idempotency_key": {
+              "combine": "AND",
+              "matchers": [
+                {
+                  "match": "type"
                 }
               ]
             },
@@ -110,6 +119,7 @@
         "body": {
           "content": {
             "amount_cents": 899,
+            "idempotency_key": "saga-43",
             "order_id": 43,
             "simulate": "decline"
           },
@@ -128,6 +138,14 @@
               "matchers": [
                 {
                   "match": "integer"
+                }
+              ]
+            },
+            "$.idempotency_key": {
+              "combine": "AND",
+              "matchers": [
+                {
+                  "match": "type"
                 }
               ]
             },
@@ -200,6 +218,171 @@
           "Content-Type": [
             "application/json"
           ]
+        },
+        "status": 200
+      },
+      "type": "Synchronous/HTTP"
+    },
+    {
+      "description": "a void for a charge payment never saw",
+      "pending": false,
+      "providerStates": [
+        {
+          "name": "payment is healthy"
+        }
+      ],
+      "request": {
+        "body": {
+          "content": {
+            "amount_cents": 500,
+            "order_id": 44
+          },
+          "contentType": "application/json",
+          "encoded": false
+        },
+        "headers": {
+          "Content-Type": [
+            "application/json"
+          ]
+        },
+        "matchingRules": {
+          "body": {
+            "$.amount_cents": {
+              "combine": "AND",
+              "matchers": [
+                {
+                  "match": "integer"
+                }
+              ]
+            },
+            "$.order_id": {
+              "combine": "AND",
+              "matchers": [
+                {
+                  "match": "integer"
+                }
+              ]
+            }
+          }
+        },
+        "method": "POST",
+        "path": "/api/payment/charges/saga-never-sent/void"
+      },
+      "response": {
+        "body": {
+          "content": {
+            "result": {
+              "id": 3,
+              "status": "VOIDED"
+            }
+          },
+          "contentType": "application/json",
+          "encoded": false
+        },
+        "headers": {
+          "Content-Type": [
+            "application/json"
+          ]
+        },
+        "matchingRules": {
+          "body": {
+            "$.result.id": {
+              "combine": "AND",
+              "matchers": [
+                {
+                  "match": "integer"
+                }
+              ]
+            }
+          }
+        },
+        "status": 200
+      },
+      "type": "Synchronous/HTTP"
+    },
+    {
+      "description": "a void for a charge that went through",
+      "pending": false,
+      "providerStates": [
+        {
+          "name": "a charge exists",
+          "params": {
+            "idempotency_key": "saga-42"
+          }
+        }
+      ],
+      "request": {
+        "body": {
+          "content": {
+            "amount_cents": 2598,
+            "order_id": 42
+          },
+          "contentType": "application/json",
+          "encoded": false
+        },
+        "headers": {
+          "Content-Type": [
+            "application/json"
+          ]
+        },
+        "matchingRules": {
+          "body": {
+            "$.amount_cents": {
+              "combine": "AND",
+              "matchers": [
+                {
+                  "match": "integer"
+                }
+              ]
+            },
+            "$.order_id": {
+              "combine": "AND",
+              "matchers": [
+                {
+                  "match": "integer"
+                }
+              ]
+            }
+          }
+        },
+        "method": "POST",
+        "path": "/api/payment/charges/saga-42/void"
+      },
+      "response": {
+        "body": {
+          "content": {
+            "result": {
+              "id": 1,
+              "status": "APPROVED"
+            }
+          },
+          "contentType": "application/json",
+          "encoded": false
+        },
+        "headers": {
+          "Content-Type": [
+            "application/json"
+          ]
+        },
+        "matchingRules": {
+          "body": {
+            "$.result.id": {
+              "combine": "AND",
+              "matchers": [
+                {
+                  "match": "integer"
+                }
+              ]
+            },
+            "$.result.status": {
+              "combine": "AND",
+              "matchers": [
+                {
+                  "match": "type"
+                }
+              ]
+            }
+          }
         },
         "status": 200
       },

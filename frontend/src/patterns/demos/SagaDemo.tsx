@@ -2,15 +2,16 @@ import { useEffect, useState } from "react";
 import { Link } from "react-router-dom";
 import { SagaRun, StockRow, asyncApi, savedToken } from "../../api/gatewayClient";
 
-const STEP_LABEL: Record<string, string> = {
+export const STEP_LABEL: Record<string, string> = {
   price: "1. Price the cart (catalog)",
   reserve_stock: "2. Hold the stock (inventory)",
   charge_payment: "3. Charge the card (payment)",
+  check_payment: "3b. Ask payment what happened (demo 13)",
   confirm: "4. Confirm the order",
   release_stock: "Undo step 2: release the stock",
 };
 
-const PILL: Record<string, string> = { done: "done", failed: "failed", compensated: "running" };
+export const PILL: Record<string, string> = { done: "done", failed: "failed", compensated: "running", timed_out: "failed" };
 const DEMO_PRODUCT = 1;
 
 export default function SagaDemo() {
@@ -115,7 +116,7 @@ export default function SagaDemo() {
           <h3>Step 2. What the saga did</h3>
           <p className="muted" style={{ fontSize: "0.85rem" }}>
             Saga <code>{latest.saga_id.slice(0, 8)}</code> for order #{latest.order_id}:{" "}
-            <span className={`pill ${latest.outcome === "completed" ? "done" : latest.outcome === "compensated" ? "running" : "failed"}`}>
+            <span className={`pill ${latest.outcome === "completed" ? "done" : latest.outcome === "compensated" || latest.outcome === "pending" ? "running" : "failed"}`}>
               {latest.outcome}
             </span>
           </p>
