@@ -326,6 +326,29 @@ export const PATTERNS: PatternInfo[] = [
     ],
     source: { label: "Microsoft — Compensating Transaction pattern", url: "https://learn.microsoft.com/azure/architecture/patterns/compensating-transaction" },
   },
+  {
+    n: 15,
+    slug: "autoscaling",
+    name: "Autoscaling under a cap",
+    what: "Runs the same flash sale with a replica cap of 3 and of 8, and compares success rate and cost per 1,000 orders.",
+    milestone: "M3",
+    live: true,
+    problem:
+      "Autoscaling adds copies of a service when load rises, but only up to a cap. A low cap keeps the bill small and loses sales at the peak. A high cap keeps sales and costs more, unless something else, such as the database, is the real limit. You only know which by measuring.",
+    inThisProject: [
+      "Every service is a Container App on the Consumption plan: 0.25 vCPU and 0.5 GiB per replica, scaled on HTTP load (10 requests at once per replica), billed per second.",
+      "make flash-sale CAP=3 sets every service's cap, tops stock up to 2,500 of each product, and runs scripts/flash_sale.py: 80 signed-in buyers each buy 1 item, over and over, for 4 minutes. A failed checkout is retried with the same cart, so every order is 1 item. Then CAP=8 runs the same sale.",
+      "Afterwards it reads Azure Monitor: replicas per minute and requests per service, during the sale and through the 5-minute cooldown. It prices them at list price (idle rate for the cooldown) and adds the MySQL server for the same time.",
+      "Kubernetes caps nodes, Container Apps caps replicas: the question is the same, what the cap costs and what it saves.",
+      "Raised by a reader of the project's LinkedIn post, after demo 14.",
+    ],
+    whenNotToUse: [
+      "A shop with steady traffic gains little from autoscaling: a fixed size is cheaper to reason about.",
+      "Raising the cap does not help when a shared piece (here 1 small MySQL server) is the limit: more replicas only queue up at it.",
+      "Scale-out takes tens of seconds: a sale that peaks in seconds needs capacity warmed up beforehand (min replicas), not a higher cap.",
+    ],
+    source: { label: "Microsoft — Scaling in Azure Container Apps", url: "https://learn.microsoft.com/azure/container-apps/scale-app" },
+  },
 ];
 
 export const SERVICE_NAMES = ["gateway", "user", "catalog", "order", "payment", "inventory"] as const;

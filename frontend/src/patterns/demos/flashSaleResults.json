@@ -1,0 +1,139 @@
+{
+  "prices": {
+    "vcpu_second": 2.4e-05,
+    "idle_vcpu_second": 3e-06,
+    "gib_second": 3e-06,
+    "per_million_requests": 0.4,
+    "mysql_hour": 0.017
+  },
+  "runs": [
+    {
+      "cap": 3,
+      "buyers": 80,
+      "seconds": 240,
+      "region": "eastus",
+      "ran_at": "2026-11-19T03:25:26+00:00",
+      "attempts": 2563,
+      "completed": 1289,
+      "success_rate": 0.5029,
+      "by_status": {
+        "503": 1076,
+        "409": 95,
+        "202": 1,
+        "200": 1289,
+        "404": 102
+      },
+      "p50_ms": 8523.6,
+      "p95_ms": 14713.3,
+      "orders_per_minute": 322.2,
+      "usage": {
+        "user": {
+          "replica_seconds": 240.0,
+          "peak_replicas": 1,
+          "requests": 96,
+          "cooldown_replica_seconds": 210.0
+        },
+        "catalog": {
+          "replica_seconds": 210.0,
+          "peak_replicas": 2,
+          "requests": 1980,
+          "cooldown_replica_seconds": 600.0
+        },
+        "order": {
+          "replica_seconds": 450.0,
+          "peak_replicas": 3,
+          "requests": 3892,
+          "cooldown_replica_seconds": 900.0
+        },
+        "payment": {
+          "replica_seconds": 90.0,
+          "peak_replicas": 1,
+          "requests": 1406,
+          "cooldown_replica_seconds": 600.0
+        },
+        "inventory": {
+          "replica_seconds": 330.0,
+          "peak_replicas": 3,
+          "requests": 2586,
+          "cooldown_replica_seconds": 1080.0
+        },
+        "gateway": {
+          "replica_seconds": 540.0,
+          "peak_replicas": 3,
+          "requests": 4162,
+          "cooldown_replica_seconds": 900.0
+        }
+      },
+      "cost_usd": {
+        "replicas": 0.0236,
+        "requests": 0.0056,
+        "mysql": 0.0026,
+        "total": 0.0318
+      },
+      "cost_per_1k_usd": 0.0247
+    },
+    {
+      "cap": 8,
+      "buyers": 80,
+      "seconds": 240,
+      "region": "eastus",
+      "ran_at": "2026-11-19T03:43:17+00:00",
+      "attempts": 5235,
+      "completed": 5193,
+      "success_rate": 0.992,
+      "by_status": {
+        "200": 5193,
+        "503": 22,
+        "404": 20
+      },
+      "p50_ms": 2543.1,
+      "p95_ms": 9626.2,
+      "orders_per_minute": 1298.2,
+      "usage": {
+        "user": {
+          "replica_seconds": 240.0,
+          "peak_replicas": 1,
+          "requests": 119,
+          "cooldown_replica_seconds": 240.0
+        },
+        "catalog": {
+          "replica_seconds": 420.0,
+          "peak_replicas": 3,
+          "requests": 5213,
+          "cooldown_replica_seconds": 900.0
+        },
+        "order": {
+          "replica_seconds": 1290.0,
+          "peak_replicas": 8,
+          "requests": 10448,
+          "cooldown_replica_seconds": 2400.0
+        },
+        "payment": {
+          "replica_seconds": 390.0,
+          "peak_replicas": 3,
+          "requests": 5213,
+          "cooldown_replica_seconds": 900.0
+        },
+        "inventory": {
+          "replica_seconds": 480.0,
+          "peak_replicas": 4,
+          "requests": 5213,
+          "cooldown_replica_seconds": 1680.0
+        },
+        "gateway": {
+          "replica_seconds": 1290.0,
+          "peak_replicas": 8,
+          "requests": 10551,
+          "cooldown_replica_seconds": 2400.0
+        }
+      },
+      "cost_usd": {
+        "replicas": 0.05,
+        "requests": 0.0147,
+        "mysql": 0.0026,
+        "total": 0.0673
+      },
+      "cost_per_1k_usd": 0.013
+    }
+  ]
+}

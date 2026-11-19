@@ -337,3 +337,15 @@ def test_every_process_reports_how_it_runs():
     processes = httpx.get(f"{GATEWAY_URL}/api/patterns/runtime").json()["processes"]
     assert len(processes) == 7  # gateway + 5 services, order twice
     assert all("uid" in p for p in processes)
+
+
+# --- Demo 15: the flash sale script, locally (the replica caps only exist in Azure) ---------------
+
+def test_demo_15_the_flash_sale_completes_orders_through_the_gateway():
+    import flash_sale
+
+    _require_stack()
+    flash_sale.top_up(GATEWAY_URL, 50)  # a sold-out product answers 409 and stays in the cart
+    summary = flash_sale.run(GATEWAY_URL, buyers=3, seconds=5)
+    assert summary["completed"] >= 3
+    assert summary["success_rate"] >= 0.9, summary["by_status"]
