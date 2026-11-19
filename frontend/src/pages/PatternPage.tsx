@@ -13,6 +13,7 @@ import SagaDemo from "../patterns/demos/SagaDemo";
 import ServiceDiscoveryDemo from "../patterns/demos/ServiceDiscoveryDemo";
 import SlowPaymentDemo from "../patterns/demos/SlowPaymentDemo";
 import CompensationDemo from "../patterns/demos/CompensationDemo";
+import AutoscalingDemo from "../patterns/demos/AutoscalingDemo";
 import StatelessDemo from "../patterns/demos/StatelessDemo";
 import { PATTERNS } from "../patterns/content";
 
@@ -31,6 +32,7 @@ const DEMOS: Record<string, () => ReactNode> = {
   "ci-cd-pipeline": () => <CiCdDemo />,
   "slow-payment": () => <SlowPaymentDemo />,
   compensation: () => <CompensationDemo />,
+  autoscaling: () => <AutoscalingDemo />,
 };
 
 export default function PatternPage() {

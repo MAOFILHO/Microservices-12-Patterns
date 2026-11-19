@@ -1,4 +1,4 @@
-.PHONY: setup run github-identity provision pause resume teardown verify test contracts smoke clean
+.PHONY: setup run github-identity provision pause resume teardown verify test contracts smoke flash-sale clean
 
 setup:
 	python3.12 scripts/setup.py
@@ -43,6 +43,10 @@ contracts:
 
 smoke:
 	.venv/bin/python -m pytest tests/smoke -v
+
+# Demo 15, Azure only: the same flash sale under a replica cap. Run CAP=3, then CAP=8.
+flash-sale:
+	.venv/bin/python infra/autoscale_demo.py --cap $(CAP) $(ARGS)
 
 clean:
 	find . -name "instance" -type d -exec rm -rf {} + 2>/dev/null || true

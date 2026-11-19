@@ -27,7 +27,7 @@ history, monolith dropped). The full agreed plan is in [`docs/PLAN.md`](docs/PLA
 - Name prefix: `ms12p` (parent uses `flaskms`). Teardown deletes the whole resource group, so a
   shared name would delete the other project.
 
-## Current state (complete: 12 of 12 live, plus demos 13 and 14; one Azure run done and torn down, #11)
+## Current state (complete: 12 of 12 live, plus demos 13, 14 and 15; one Azure run done and torn down, #11)
 - Folders: `services/{user,catalog,order,payment,inventory}/` (Flask, one DB each), `gateway/`
   (FastAPI), `registry/` (FastAPI), `shared/` (`shop_common`), `contracts/`, `frontend/`, `infra/`,
   `scripts/`, `tests/`.
@@ -57,6 +57,14 @@ history, monolith dropped). The full agreed plan is in [`docs/PLAN.md`](docs/PLA
   `duplicates_skipped` and `not_handled` (in `/api/inventory/events`). Demo switches use
   `shop_common.flask_support.DemoSwitch` and `switches_off()`. `POST /api/order/sagas/<id>/replay` (chaos, own
   checkout) clears `published_at` so the relay resends the same ids. Page `/patterns/compensation`.
+- Demo 15 (autoscaling, from a LinkedIn comment): `scripts/flash_sale.py`: `sign_up` buyers (not timed), then
+  `sell`: each buyer buys 1 item; a failed checkout retries the SAME cart (no cart growth); `summarize` counts only
+  200 as completed. `top_up` brings free stock to a level. `make flash-sale CAP=3` / `CAP=8` (`infra/autoscale_demo.py`,
+  Azure only) prints the max cost and asks first, sets every service's `--max-replicas`, sets `CHAOS_ENABLED=1` on
+  inventory only to top up to 2,500 (removed in `finally`), waits for every app's latest revision, runs the sale, waits
+  out the 5-min cooldown, reads Azure Monitor `Replicas`/`Requests` split by revision, prices sale replicas active and
+  cooldown replicas idle plus MySQL (`PRICES`, checked 2026-11-18), resets the cap to 3 in `finally`, and writes
+  `frontend/src/patterns/demos/flashSaleResults.json`. The page `/patterns/autoscaling` shows that file.
 - Events (pattern 7): `shop_common/events.py` (Redis Stream `shop.events`, consumer groups, at least
   once). Order writes `outbox_event` in the same transaction; `outbox.py` relays every 1 s; inventory's
   `consumer.py` commits the hold on OrderConfirmed and dedupes via `consumed_event`. `POST /debug/bus`
