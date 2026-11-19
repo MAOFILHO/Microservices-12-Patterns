@@ -97,3 +97,25 @@ def test_a_buyer_retries_the_same_cart_after_a_failed_checkout():
     flash_sale.buy(_shop([503, 503, 200], calls), first_product=1, until=time.monotonic() + 0.1, out=out)
     assert calls[:5] == ["/order/add-item", "/order/checkout", "/order/checkout", "/order/checkout", "/order/add-item"]
     assert [a.status for a in out[:3]] == [503, 503, 200]
+
+
+def test_sign_up_waits_out_a_busy_user_service(monkeypatch):
+    """Signing up is not timed: a 503 from a user service still scaling up is retried, not fatal."""
+    logins = [503, 503, 200]
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        if request.url.path.endswith("/login"):
+            status = logins.pop(0)
+            return httpx.Response(status, json={"token": "t"} if status == 200 else {})
+        return httpx.Response(201)
+
+    monkeypatch.setattr(flash_sale, "SIGN_UP_RETRY_SECONDS", 0)
+    with httpx.Client(transport=httpx.MockTransport(handler), base_url="http://shop") as client:
+        assert flash_sale.sign_up_one(client) == {"Authorization": "Bearer t"}
+
+
+def test_a_buyer_whose_order_went_through_after_all_starts_a_new_cart():
+    """A checkout can time out at the gateway yet complete: the retry then finds no open order (404)."""
+    calls: list[str] = []
+    flash_sale.buy(_shop([503, 404, 200], calls), first_product=1, until=time.monotonic() + 0.1, out=[])
+    assert calls[:5] == ["/order/add-item", "/order/checkout", "/order/checkout", "/order/add-item", "/order/checkout"]

@@ -43,7 +43,8 @@ function usd(value: number | null) {
 
 const STATUS_LABEL: Record<string, string> = {
   "202": "payment pending",
-  "409": "sold out or pending",
+  "404": "no cart left: an earlier try went through after a timeout",
+  "409": "sold out, pending, or a checkout already running",
   "503": "a service was down or its breaker open",
   "no answer": "no answer in 30 s",
 };

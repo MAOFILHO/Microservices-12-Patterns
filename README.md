@@ -6,8 +6,9 @@ can click.
 
 > **Status: complete.** All 12 patterns are live, each with a working demo, locally and in one
 > real Azure run: provision, deploy through GitHub Actions with OIDC, smoke tests, screenshots,
-> teardown. Demos 13 (a slow payment in the middle of checkout) and 14 (the saga's undo under
-> timeouts and duplicate events) came from readers' comments on the project's LinkedIn post. The foundation is copied from
+> teardown. Demos 13 (a slow payment in the middle of checkout), 14 (the saga's undo under
+> timeouts and duplicate events) and 15 (a flash sale under a replica cap of 3 and of 8, run in
+> Azure) came from readers' comments on the project's LinkedIn post. The foundation is copied from
 > [Azure-Ecommerce-Monolith-Microservices-Migration](https://github.com/MAOFILHO/Azure-Ecommerce-Monolith-Microservices-Migration).
 
 ## Project summary
@@ -28,15 +29,16 @@ React frontend with one page per pattern. Every demo calls the real services: no
 | M3b: delivery and the Azure run | 3 | [#12](https://github.com/MAOFILHO/Microservices-12-Patterns/pull/12), [#13](https://github.com/MAOFILHO/Microservices-12-Patterns/pull/13), [#14](https://github.com/MAOFILHO/Microservices-12-Patterns/pull/14) |
 | Demo 13: a slow payment mid-checkout | 4 and 8, under a timeout | [#16](https://github.com/MAOFILHO/Microservices-12-Patterns/pull/16) |
 | Demo 14: compensation under fire | 7 and 8, under timeouts and duplicates | [#17](https://github.com/MAOFILHO/Microservices-12-Patterns/pull/17) |
+| Demo 15: autoscaling under a cap | 9 and 10, under a flash sale in Azure | [#18](https://github.com/MAOFILHO/Microservices-12-Patterns/pull/18) |
 
 M3b was planned as 7 GitHub issues ([#5 to #11](https://github.com/MAOFILHO/Microservices-12-Patterns/issues?q=is%3Aissue)),
 all closed.
 
 **How it was checked.**
-- **194 unit tests** across 8 suites, each in its own virtualenv, built test-first from M3a on.
+- **206 unit tests** across 8 suites, each in its own virtualenv, built test-first from M3a on.
 - **Pact contract tests**: the order service's contracts with payment, catalog and inventory,
   verified against the real providers in CI.
-- **28 local smoke tests** against the running stack, and **4 Azure smoke tests** against the real
+- **29 local smoke tests** against the running stack, and **4 Azure smoke tests** against the real
   deployment.
 - **CI on every pull request** runs only what the change touches; every image is built for
   linux/amd64, started, and rejected if it runs as root. `main` requires the "CI ok" check.
@@ -64,6 +66,7 @@ or the cheapest SKUs, with a $25/month budget alert, then torn down and verified
 | 12 | [Service Discovery](#12-service-discovery) | Finds service instances automatically at runtime | M2 |
 | 13 | [Saga under a slow payment](#13-saga-under-a-slow-payment) | Follows the money and the stock when payment times out mid-checkout | Demo 13 |
 | 14 | [Compensation under fire](#14-compensation-under-fire) | Times out and duplicates the saga's undo, then checks the stock ends where it began | Demo 14 |
+| 15 | [Autoscaling under a cap](#15-autoscaling-under-a-cap) | Runs the same flash sale with a replica cap of 3 and of 8, and compares success rate and cost per 1,000 orders | Demo 15 |
 
 ## Architecture
 
@@ -232,6 +235,30 @@ reader asked for duplicate events and timeouts during compensation. Three cases:
 Here the hold arrived late: the release came first, the stock went 473 to 473, nothing held, 1 release received.
 
 <img width="100%" alt="Demo 14: inventory holds slowly; the saga's release arrives first, the late hold holds nothing, and the stock ends where it began" src="docs/screenshots/p14-compensation.jpg" />
+
+### 15. Autoscaling under a cap
+A third reader asked how a node cap changes cloud cost: run the same flash sale with a low and a
+high cap, and compare checkout success rate and cost per 1,000 completed orders. Container Apps
+caps replicas, not nodes, so `make flash-sale CAP=3` and `CAP=8` cap every service at that many
+replicas. 80 buyers each buy 1 item, over and over, for 4 minutes, from the same starting stock. A
+failed checkout is retried with the same cart, so every order is 1 item. Cost is read from Azure
+Monitor and priced at list price: replicas during the sale and the 5-minute cooldown after it,
+requests, and the MySQL server for the same time.
+
+| | Cap 3 | Cap 8 |
+|---|---|---|
+| Checkout success rate | 50.3% (1,289 of 2,563) | 99.2% (5,193 of 5,235) |
+| Completed orders per minute | 322 | 1,298 |
+| Median checkout time | 8.5 s | 2.5 s |
+| Cost of the run | $0.032 | $0.067 |
+| **Cost per 1,000 completed orders** | **$0.025** | **$0.013** |
+
+The higher cap cost 2.1 times as much and sold 4 times as many orders, so each order cost about
+half as much. The single small MySQL server was not the limit at this load; the gateway and order
+service, capped at 3 replicas, were. One run each, 19 November 2026, East US: a trend, not a
+benchmark.
+
+<img width="100%" alt="Demo 15: the same flash sale at a cap of 3 and of 8 replicas; cap 8 completes 99% of checkouts and halves the cost per 1,000 orders" src="docs/screenshots/p15-autoscaling.jpg" />
 
 ## Run locally (no Docker)
 

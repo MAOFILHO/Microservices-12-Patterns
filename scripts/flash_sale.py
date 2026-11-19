@@ -21,6 +21,8 @@ PRODUCTS = range(1, 25)  # the catalog's 24 sample products
 TIMEOUT = httpx.Timeout(30.0)
 RESTOCK_MAX = 1000  # inventory's restock accepts at most this many per call
 PENDING_WAIT_SECONDS = 6  # the reconciler settles pending payments every 5 s
+SIGN_UP_TRIES = 6
+SIGN_UP_RETRY_SECONDS = 3
 
 
 @dataclass(frozen=True)
@@ -73,13 +75,21 @@ def _shop(gateway: str) -> str:
     return f"{gateway.rstrip('/')}/api/shop"
 
 
-def _sign_up(shop: str) -> dict:
+def sign_up_one(client: httpx.Client) -> dict:
+    """Creates and logs in one buyer. Retried: a busy user service (password hashing is slow on a
+    0.25 vCPU replica) may answer 503 while it scales up, and signing up is not part of the sale."""
     tag = uuid.uuid4().hex[:10]
     user = {"username": f"fs{tag}", "password": "flashsale1"}
-    httpx.post(f"{shop}/user/create", data={**user, "email": f"fs{tag}@example.com"}, timeout=TIMEOUT)
-    r = httpx.post(f"{shop}/user/login", data=user, timeout=TIMEOUT)
-    r.raise_for_status()
-    return {"Authorization": f"Bearer {r.json()['token']}"}
+    for attempt in range(SIGN_UP_TRIES):
+        try:
+            client.post("/user/create", data={**user, "email": f"fs{tag}@example.com"})
+            r = client.post("/user/login", data=user)
+            if r.status_code == 200:
+                return {"Authorization": f"Bearer {r.json()['token']}"}
+        except httpx.HTTPError:
+            pass
+        time.sleep(SIGN_UP_RETRY_SECONDS * (attempt + 1))
+    raise SystemExit(f"Could not sign up a buyer after {SIGN_UP_TRIES} tries")
 
 
 def _cart_has_items(client: httpx.Client) -> bool:
@@ -105,6 +115,8 @@ def buy(client: httpx.Client, first_product: int, until: float, out: list[Attemp
         out.append(Attempt(status, (time.perf_counter() - started) * 1000))  # list.append is thread-safe
         if status == 200:
             cart_full, product = False, product % len(PRODUCTS) + 1
+        elif status == 404 and added:  # no open order: an earlier checkout went through after all
+            cart_full = False
         elif status == 202:
             time.sleep(PENDING_WAIT_SECONDS)
             cart_full = _cart_has_items(client)
@@ -117,8 +129,8 @@ def buy(client: httpx.Client, first_product: int, until: float, out: list[Attemp
 
 
 def sign_up(gateway: str, buyers: int) -> list[dict]:
-    with ThreadPoolExecutor(max_workers=10) as pool:
-        return list(pool.map(lambda _: _sign_up(_shop(gateway)), range(buyers)))
+    with httpx.Client(base_url=_shop(gateway), timeout=TIMEOUT) as client, ThreadPoolExecutor(max_workers=4) as pool:
+        return list(pool.map(lambda _: sign_up_one(client), range(buyers)))
 
 
 def sell(gateway: str, buyers: list[dict], seconds: float) -> dict:
